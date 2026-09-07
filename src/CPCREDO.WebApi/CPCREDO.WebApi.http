@@ -1,0 +1,116 @@
+@CPCREDO.WebApi_HostAddress = http://localhost:5080
+
+GET {{CPCREDO.WebApi_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/public/institution
+Accept: application/json
+
+###
+
+POST {{CPCREDO.WebApi_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Admin@Cpcredo2026"
+}
+
+###
+
+@token = replace-me
+@journalId = 00000000-0000-0000-0000-000000000000
+
+POST {{CPCREDO.WebApi_HostAddress}}/api/v1/journals
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "description": "Apport de capital",
+  "currencyCode": "HTG",
+  "lines": [
+    { "glAccountId": "0c0ec0de-0001-4000-a000-000000001010", "debit": 1000.0000, "credit": 0, "description": "Caisse" },
+    { "glAccountId": "0c0ec0de-0001-4000-a000-000000003010", "debit": 0, "credit": 1000.0000, "description": "Parts sociales" }
+  ]
+}
+
+###
+
+POST {{CPCREDO.WebApi_HostAddress}}/api/v1/journals/{{journalId}}/reversal
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/trial-balance?asOf=2026-09-02&currency=HTG
+Authorization: Bearer {{token}}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/members?q=Pétion
+Authorization: Bearer {{token}}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/members/0c0ec0de-0001-4000-a000-000000000201/360
+Authorization: Bearer {{token}}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/savings/products
+Authorization: Bearer {{token}}
+
+###
+
+POST {{CPCREDO.WebApi_HostAddress}}/api/v1/savings/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "memberId": "0c0ec0de-0001-4000-a000-000000000201",
+  "productId": "0c0ec0de-0001-4000-a000-000000000301"
+}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/savings/accounts/{accountId}/statement?from=2026-01-01&to=2026-09-03
+Authorization: Bearer {{token}}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/treasury/banks
+Authorization: Bearer {{token}}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/treasury/vaults
+Authorization: Bearer {{token}}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/treasury/transfers
+Authorization: Bearer {{token}}
+
+###
+
+POST {{CPCREDO.WebApi_HostAddress}}/api/v1/treasury/transfers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "direction": "BankToVault",
+  "bankAccountId": "0c0ec0de-0001-4000-a000-000000000401",
+  "amount": 10000.00,
+  "feeAmount": 0
+}
+
+###
+
+GET {{CPCREDO.WebApi_HostAddress}}/api/v1/treasury/journal?format=pdf
+Authorization: Bearer {{token}}

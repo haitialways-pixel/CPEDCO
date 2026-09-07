@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cpcredo-postgres
+    environment:
+      POSTGRES_DB: cpcredo
+      POSTGRES_USER: cpcredo
+      POSTGRES_PASSWORD: cpcredo
+      TZ: America/Port-au-Prince
+    ports:
+      - "5432:5432"
+    volumes:
+      - cpcredo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cpcredo -d cpcredo"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - cpcredo
+
+  api:
+    build:
+      context: .
+      dockerfile: src/CPCREDO.WebApi/Dockerfile
+    container_name: cpcredo-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      TZ: America/Port-au-Prince
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=cpcredo;Username=cpcredo;Password=cpcredo
+      Jwt__Issuer: CPCREDO
+      Jwt__Audience: CPCREDO.Staff
+      Jwt__Secret: CPCREDO-dev-change-me-32chars-minimum-key!
+      Seed__AdminUsername: admin
+      Seed__AdminPassword: Admin@Cpcredo2026
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cpcredo
+
+  web:
+    build:
+      context: ./src/CPCREDO.Web
+      dockerfile: Dockerfile
+    container_name: cpcredo-web
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    networks:
+      - cpcredo
+
+volumes:
+  cpcredo_pgdata:
+
+networks:
+  cpcredo:
+    name: cpcredo
