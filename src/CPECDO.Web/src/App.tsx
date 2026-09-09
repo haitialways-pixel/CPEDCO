@@ -1,11 +1,11 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MemberCreatePage } from "./pages/MemberCreatePage";
-import { Member360Page } from "./pages/Member360Page";
-import { MemberSearchPage } from "./pages/MemberSearchPage";
+import { MembersRegisterPage } from "./pages/MembersRegisterPage";
+import { ServiceClientPage } from "./pages/ServiceClientPage";
 import { SavingsStatementPage } from "./pages/SavingsStatementPage";
 import { TellerPage } from "./pages/TellerPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
@@ -21,7 +21,13 @@ import { LoanNewPage } from "./pages/LoanNewPage";
 import { LoanDetailPage } from "./pages/LoanDetailPage";
 import { CollectionSheetPage } from "./pages/CollectionSheetPage";
 import { TellerCreditPage } from "./pages/TellerCreditPage";
+import { InternalMovementPage } from "./pages/InternalMovementPage";
 import type { ReactNode } from "react";
+
+function LegacyMemberRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/membres/${id}`} replace />;
+}
 
 function Protected({ children }: { children: ReactNode }) {
   const { ready, session } = useAuth();
@@ -49,16 +55,19 @@ export function App() {
           </Protected>
         }
       />
+      <Route path="/members" element={<Navigate to="/membres" replace />} />
+      <Route path="/members/new" element={<Navigate to="/membres/nouveau" replace />} />
+      <Route path="/members/:id" element={<LegacyMemberRedirect />} />
       <Route
-        path="/members"
+        path="/membres"
         element={
           <Protected>
-            <MemberSearchPage />
+            <MembersRegisterPage />
           </Protected>
         }
       />
       <Route
-        path="/members/new"
+        path="/membres/nouveau"
         element={
           <Protected>
             <MemberCreatePage />
@@ -66,10 +75,26 @@ export function App() {
         }
       />
       <Route
-        path="/members/:id"
+        path="/membres/:id"
         element={
           <Protected>
-            <Member360Page />
+            <MembersRegisterPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/service-client"
+        element={
+          <Protected>
+            <ServiceClientPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/service-client/:id"
+        element={
+          <Protected>
+            <ServiceClientPage />
           </Protected>
         }
       />
@@ -82,10 +107,26 @@ export function App() {
         }
       />
       <Route
+        path="/caisse/decaissement-credit"
+        element={
+          <Protected>
+            <TellerCreditPage />
+          </Protected>
+        }
+      />
+      <Route
         path="/caisse/paiement-credit"
         element={
           <Protected>
             <TellerCreditPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/caisse/mouvement-interne"
+        element={
+          <Protected>
+            <InternalMovementPage />
           </Protected>
         }
       />

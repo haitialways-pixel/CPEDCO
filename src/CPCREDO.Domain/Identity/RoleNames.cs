@@ -28,4 +28,19 @@ public static class RoleNames
     [
         Admin, Gerant, ServiceClient
     ];
+
+    public static readonly IReadOnlyList<string> KycUploadRoles =
+    [
+        Admin, Gerant, ServiceClient, OfficierCredit, Caissier
+    ];
+
+    public static readonly IReadOnlyList<string> KycManageRoles =
+    [
+        Admin, Gerant
+    ];
+
+    public static readonly IReadOnlyList<string> MemberCreateRoles =
+    [
+        Admin, Gerant, OfficierCredit, ServiceClient
+    ];
 }

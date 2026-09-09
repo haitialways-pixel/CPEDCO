@@ -8,7 +8,7 @@ export function MemberCreatePage() {
   const { t } = useTranslation();
   const { session } = useAuth();
   const navigate = useNavigate();
-  const canWrite = session?.roles.some((r) => !r.isReadOnly) ?? false;
+  const canWrite = session?.roles.some((r) => ["Admin", "Gerant", "OfficierCredit"].includes(r.name)) ?? false;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
@@ -21,13 +21,17 @@ export function MemberCreatePage() {
     addressLine: "",
     city: "Pétion-Ville",
     commune: "Pétion-Ville",
-    status: "Pending",
-    kycStatus: "Incomplete",
-    legalStatus: "Usager",
-    qualificationShareCount: "0"
+    dateOfBirth: "",
+    placeOfBirth: "",
+    occupation: "",
+    status: "Active",
+    kycStatus: "Verified",
+    legalStatus: "Societaire",
+    qualificationShareCount: "1",
+    isFounder: false
   });
 
-  if (!canWrite) return <Navigate to="/members" replace />;
+  if (!canWrite) return <Navigate to="/" replace />;
 
   function set(name: string, value: string) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -48,12 +52,17 @@ export function MemberCreatePage() {
         addressLine: form.addressLine,
         city: form.city,
         commune: form.commune || undefined,
+        dateOfBirth: form.dateOfBirth || undefined,
+        placeOfBirth: form.placeOfBirth || undefined,
+        occupation: form.occupation || undefined,
         status: form.status,
         kycStatus: form.kycStatus,
         legalStatus: form.legalStatus,
-        qualificationShareCount: Number(form.qualificationShareCount || 0)
+        qualificationShareCount: Number(form.qualificationShareCount || 0),
+        isFounder: form.isFounder,
+        founderGroup: form.isFounder ? "QualifyingFounder" : null
       });
-      navigate(`/members/${created.id}`);
+      navigate(`/membres/${created.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("members.saveError"));
     } finally {
@@ -64,9 +73,9 @@ export function MemberCreatePage() {
   return (
     <main className="page page--narrow">
       <p>
-        <Link to="/members">{t("members.back")}</Link>
+        <Link to="/membres">{t("members.back")}</Link>
       </p>
-      <h1>{t("members.create")}</h1>
+      <h1>{t("members.createSocietaire")}</h1>
       {error ? <p className="login-form__error">{error}</p> : null}
       <form className="stack-form" onSubmit={(e) => void onSubmit(e)}>
         <div className="form-grid">
@@ -107,6 +116,18 @@ export function MemberCreatePage() {
             <input value={form.commune} onChange={(e) => set("commune", e.target.value)} />
           </label>
           <label>
+            {t("members.dateOfBirth")}
+            <input type="date" value={form.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} />
+          </label>
+          <label>
+            {t("members.placeOfBirth")}
+            <input value={form.placeOfBirth} onChange={(e) => set("placeOfBirth", e.target.value)} />
+          </label>
+          <label className="span-2">
+            {t("members.occupation")}
+            <input value={form.occupation} onChange={(e) => set("occupation", e.target.value)} />
+          </label>
+          <label>
             {t("members.statusLabel")}
             <select value={form.status} onChange={(e) => set("status", e.target.value)}>
               <option value="Pending">{t("members.status.Pending")}</option>
@@ -141,6 +162,14 @@ export function MemberCreatePage() {
               value={form.qualificationShareCount}
               onChange={(e) => set("qualificationShareCount", e.target.value)}
             />
+          </label>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.isFounder}
+              onChange={(e) => setForm((current) => ({ ...current, isFounder: e.target.checked }))}
+            />
+            {t("members.founder")}
           </label>
         </div>
         <p className="muted">{t("members.voteRule")}</p>

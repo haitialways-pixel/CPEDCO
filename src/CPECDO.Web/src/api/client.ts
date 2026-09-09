@@ -2,6 +2,18 @@ import type { Institution, LoginResponse, MeResponse } from "./types";
 
 const TOKEN_KEY = "cpcredo.token";
 
+/** Empty base = relative /api/... (same origin on LAN/phone). Dev uses the Vite proxy. Never localhost. */
+export const API_BASE = "";
+
+export function apiUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(apiUrl(path), init);
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -32,13 +44,13 @@ export async function parseError(response: Response): Promise<string> {
 }
 
 export async function fetchInstitution(): Promise<Institution> {
-  const response = await fetch("/api/public/institution");
+  const response = await apiFetch("/api/public/institution");
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as Institution;
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
-  const response = await fetch("/api/auth/login", {
+  const response = await apiFetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password })
@@ -48,7 +60,7 @@ export async function login(username: string, password: string): Promise<LoginRe
 }
 
 export async function fetchMe(token: string): Promise<MeResponse> {
-  const response = await fetch("/api/auth/me", {
+  const response = await apiFetch("/api/auth/me", {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!response.ok) throw new Error(await parseError(response));
@@ -56,7 +68,7 @@ export async function fetchMe(token: string): Promise<MeResponse> {
 }
 
 export async function changePassword(token: string, currentPassword: string, newPassword: string): Promise<void> {
-  const response = await fetch("/api/auth/change-password", {
+  const response = await apiFetch("/api/auth/change-password", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ currentPassword, newPassword })

@@ -3,6 +3,8 @@ using CPCREDO.Application.Common;
 using CPCREDO.Application.Reports;
 using CPCREDO.Domain.Accounting;
 using CPCREDO.Domain.Common;
+using CPCREDO.Domain.Loans;
+using CPCREDO.Domain.Members;
 using CPCREDO.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -64,9 +66,30 @@ public sealed class ReportService : IReportService
                 .Where(e => e.TenantId == _currentUser.TenantId && e.TillSessionId != null && tillIds.Contains(e.TillSessionId.Value))
                 .ToListAsync(cancellationToken);
 
+        var internals = tillIds.Count == 0
+            ? []
+            : await _db.InternalCashMovements.AsNoTracking()
+                .Include(m => m.SourceTillSession)!.ThenInclude(s => s!.User)
+                .Include(m => m.DestinationTillSession)!.ThenInclude(s => s!.User)
+                .Where(m => m.TenantId == _currentUser.TenantId && m.CurrencyCode == currency
+                            && ((m.SourceTillSessionId != null && tillIds.Contains(m.SourceTillSessionId.Value))
+                                || (m.DestinationTillSessionId != null && tillIds.Contains(m.DestinationTillSessionId.Value))))
+                .ToListAsync(cancellationToken);
+
         var rows = ofDay.Select(t =>
         {
             var related = movements.Where(m => m.TillSessionId == t.Id).ToList();
+            var relatedInternal = internals
+                .Where(m => (m.SourceTillSessionId == t.Id || m.DestinationTillSessionId == t.Id)
+                            && (OnDay(m.CreatedAtUtc, day) || (m.AcceptedAtUtc is { } acc && OnDay(acc, day))))
+                .Select(m => new TellerCashProofInternalDto(
+                    m.Direction.ToString(),
+                    m.Status.ToString(),
+                    m.Amount,
+                    m.SourceTillSessionId == t.Id
+                        ? (m.DestinationTillSession?.User?.FullName ?? "Coffre")
+                        : (m.SourceTillSession?.User?.FullName ?? "Coffre")))
+                .ToList();
             return new TellerCashProofSessionDto(
                 t.Id,
                 t.User?.FullName ?? string.Empty,
@@ -83,7 +106,8 @@ public sealed class ReportService : IReportService
                     .Select(c => new TellerCashProofCountDto(c.FaceValue, c.Quantity, c.Subtotal))
                     .ToList(),
                 MoneyAmount.Normalize(related.Where(m => m.EntryType == "Credit").Sum(m => m.Amount)),
-                MoneyAmount.Normalize(related.Where(m => m.EntryType == "Debit").Sum(m => m.Amount)));
+                MoneyAmount.Normalize(related.Where(m => m.EntryType == "Debit").Sum(m => m.Amount)),
+                relatedInternal);
         }).ToList();
 
         return Result<TellerCashProofDto>.Ok(new TellerCashProofDto(day, currency, rows));
@@ -265,7 +289,7 @@ public sealed class ReportService : IReportService
         if (!data.IsSuccess)
             return Result<ReportFileDto>.Fail(data.ErrorCode!, data.ErrorMessage!);
         var report = data.Value!;
-        var headers = new[] { "Caissier", "Agence", "Statut", "Fond", "Attendu", "Compté", "Écart", "Dépôts", "Retraits" };
+        var headers = new[] { "Caissier", "Agence", "Statut", "Fond", "Attendu", "Compté", "Écart", "Dépôts", "Retraits", "Mouvements internes" };
         var rows = report.Sessions.Select(s => (IReadOnlyList<string>)
         [
             s.CashierName,
@@ -276,7 +300,9 @@ public sealed class ReportService : IReportService
             s.CountedCash is { } counted ? Money(counted, report.CurrencyCode) : "",
             s.OverShortAmount is { } over ? Money(over, report.CurrencyCode) : "",
             Money(s.Deposits, report.CurrencyCode),
-            Money(s.Withdrawals, report.CurrencyCode)
+            Money(s.Withdrawals, report.CurrencyCode),
+            string.Join(" ; ", s.InternalMovements.Select(m =>
+                $"{LabelDirection(m.Direction)} {Money(m.Amount, report.CurrencyCode)} ({m.Status})"))
         ]).ToList();
         return FileResult(
             format,
@@ -398,6 +424,155 @@ public sealed class ReportService : IReportService
             $"liquidite-{r.AsOf:yyyy-MM-dd}");
     }
 
+    public async Task<Result<ParCt90Dto>> GetParCt90Async(DateOnly? asOf, CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<ParCt90Dto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+
+        var day = asOf ?? _clock.TodayInPortAuPrince();
+        var loans = await _db.Loans.AsNoTracking()
+            .Include(l => l.Product)
+            .Include(l => l.Installments)
+            .Where(l => l.TenantId == _currentUser.TenantId && l.Status == LoanStatus.Active)
+            .ToListAsync(cancellationToken);
+        var ct90 = loans.Where(l => LoanEvergreen.IsCt90(l.Product)).ToList();
+        var outstanding = ct90.Select(l =>
+        {
+            var principal = MoneyAmount.Normalize(l.Installments.Sum(LoanRepaymentAllocator.RemainingPrincipal));
+            var dpd = LoanDelinquency.DaysPastDue(l.Installments, day);
+            return (principal, dpd);
+        }).ToList();
+        var portfolio = MoneyAmount.Normalize(outstanding.Sum(x => x.principal));
+        return Result<ParCt90Dto>.Ok(new ParCt90Dto(
+            day,
+            Currencies.Htg,
+            portfolio,
+            ct90.Count,
+            Bucket(1, outstanding, portfolio),
+            Bucket(7, outstanding, portfolio),
+            Bucket(30, outstanding, portfolio)));
+    }
+
+    public async Task<Result<ReportFileDto>> ExportParCt90Async(
+        DateOnly? asOf, string format, CancellationToken cancellationToken = default)
+    {
+        var data = await GetParCt90Async(asOf, cancellationToken);
+        if (!data.IsSuccess)
+            return Result<ReportFileDto>.Fail(data.ErrorCode!, data.ErrorMessage!);
+        var r = data.Value!;
+        var headers = new[] { "Indicateur", "Jours", "Encours à risque", "Ratio" };
+        IReadOnlyList<string> Line(string name, ParBucketDto b) =>
+        [
+            name,
+            b.Days.ToString(),
+            Money(b.Outstanding, r.CurrencyCode),
+            b.Ratio is { } ratio ? $"{MoneyDisplay.FormatNumber(ratio * 100m)} %" : "n/d"
+        ];
+        var rows = new List<IReadOnlyList<string>>();
+        rows.Add(["Portefeuille CT90", "—", Money(r.PortfolioOutstanding, r.CurrencyCode), $"{r.LoanCount} crédits"]);
+        rows.Add(Line("PAR 1", r.Par1));
+        rows.Add(Line("PAR 7", r.Par7));
+        rows.Add(Line("PAR 30", r.Par30));
+        return FileResult(
+            format,
+            "PAR 1 / 7 / 30 — CT90",
+            $"Au {r.AsOf:yyyy-MM-dd} · {r.CurrencyCode}",
+            headers,
+            rows,
+            $"par-ct90-{r.AsOf:yyyy-MM-dd}");
+    }
+
+    public async Task<Result<RenewalRegisterDto>> GetRenewalRegisterAsync(
+        DateOnly? from,
+        DateOnly? to,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<RenewalRegisterDto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+
+        var end = to ?? _clock.TodayInPortAuPrince();
+        var start = from ?? new DateOnly(end.Year, 1, 1);
+        var startUtc = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddHours(-6);
+        var endUtc = DateTime.SpecifyKind(end.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddHours(18);
+
+        var news = await _db.Loans.AsNoTracking()
+            .Where(l => l.TenantId == _currentUser.TenantId
+                        && l.RenewedFromLoanId != null
+                        && l.CreatedAtUtc >= startUtc && l.CreatedAtUtc < endUtc)
+            .OrderBy(l => l.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+        var oldIds = news.Select(l => l.RenewedFromLoanId!.Value).Distinct().ToList();
+        var previous = oldIds.Count == 0
+            ? new Dictionary<Guid, Loan>()
+            : await _db.Loans.AsNoTracking()
+                .Where(l => oldIds.Contains(l.Id))
+                .ToDictionaryAsync(l => l.Id, cancellationToken);
+        var memberIds = news.Select(l => l.MemberId).Distinct().ToList();
+        var members = memberIds.Count == 0
+            ? new Dictionary<Guid, Member>()
+            : await _db.Members.AsNoTracking()
+                .Where(m => memberIds.Contains(m.Id))
+                .ToDictionaryAsync(m => m.Id, cancellationToken);
+
+        var rows = news.Select(l =>
+        {
+            previous.TryGetValue(l.RenewedFromLoanId!.Value, out var old);
+            members.TryGetValue(l.MemberId, out var member);
+            var prevPrincipal = old?.Principal ?? 0m;
+            return new RenewalRegisterRowDto(
+                l.CreatedAtUtc,
+                member?.MemberNo ?? string.Empty,
+                member is null ? string.Empty : $"{member.FirstName} {member.LastName}".Trim(),
+                old?.LoanNo ?? string.Empty,
+                l.LoanNo,
+                l.CycleNumber,
+                prevPrincipal,
+                l.Principal,
+                LoanEvergreen.Matches(l.CycleNumber, l.Principal, prevPrincipal),
+                l.CurrencyCode);
+        }).ToList();
+
+        return Result<RenewalRegisterDto>.Ok(new RenewalRegisterDto(start, end, rows));
+    }
+
+    public async Task<Result<ReportFileDto>> ExportRenewalRegisterAsync(
+        DateOnly? from, DateOnly? to, string format, CancellationToken cancellationToken = default)
+    {
+        var data = await GetRenewalRegisterAsync(from, to, cancellationToken);
+        if (!data.IsSuccess)
+            return Result<ReportFileDto>.Fail(data.ErrorCode!, data.ErrorMessage!);
+        var r = data.Value!;
+        var headers = new[] { "Date", "Membre", "Nom", "Ancien n°", "Nouveau n°", "Cycle", "Capital précédent", "Nouveau capital", "Evergreen" };
+        var rows = r.Rows.Select(x => (IReadOnlyList<string>)
+        [
+            x.RenewedAtUtc.ToString("yyyy-MM-dd"),
+            x.MemberNo,
+            x.MemberName,
+            x.OldLoanNo,
+            x.NewLoanNo,
+            x.NewCycle.ToString(),
+            Money(x.PreviousPrincipal, x.CurrencyCode),
+            Money(x.NewPrincipal, x.CurrencyCode),
+            x.IsEvergreen ? "Oui" : "Non"
+        ]).ToList();
+        return FileResult(
+            format,
+            "Registre des renouvellements",
+            $"Du {r.From:yyyy-MM-dd} au {r.To:yyyy-MM-dd}",
+            headers,
+            rows,
+            $"registre-renouvellements-{r.From:yyyy-MM-dd}-{r.To:yyyy-MM-dd}");
+    }
+
+    private static ParBucketDto Bucket(int days, IReadOnlyList<(decimal principal, int dpd)> loans, decimal portfolio)
+    {
+        var amount = MoneyAmount.Normalize(loans.Where(x => x.dpd >= days).Sum(x => x.principal));
+        decimal? ratio = portfolio <= 0m ? null : MoneyAmount.Normalize(amount / portfolio);
+        return new ParBucketDto(days, amount, ratio);
+    }
+
     private async Task<List<BalanceRow>> LoadBalancesAsync(
         DateOnly asOf,
         string currency,
@@ -444,6 +619,14 @@ public sealed class ReportService : IReportService
 
     private bool OnDay(DateTime utc, DateOnly day) =>
         DateOnly.FromDateTime(_clock.ToPortAuPrince(utc)) == day;
+
+    private static string LabelDirection(string direction) => direction switch
+    {
+        "VaultToTill" => "Coffre → Caisse",
+        "TillToVault" => "Caisse → Coffre",
+        "TillToTill" => "Caisse → Caisse",
+        _ => direction
+    };
 
     private static string? NormalizeCurrency(string? currencyCode)
     {

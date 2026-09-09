@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CPCREDO.Infrastructure.Seed;
@@ -25,6 +26,12 @@ public sealed class DataSeeder
         var db = services.GetRequiredService<CpcredoDbContext>();
         var config = services.GetRequiredService<IConfiguration>();
         var logger = services.GetRequiredService<ILogger<DataSeeder>>();
+        var seedEnabled = config.GetValue("Seed:Enabled", true);
+        if (!seedEnabled)
+        {
+            await BootstrapProductionAsync(services, db, logger, cancellationToken);
+            return;
+        }
 
         if (await db.Tenants.AnyAsync(t => t.Id == SeedGuids.TenantId, cancellationToken))
         {
@@ -46,7 +53,9 @@ public sealed class DataSeeder
             await EnsureChartOfAccountsAsync(db, cancellationToken);
             await EnsureSavingsProductsAsync(db, logger, cancellationToken);
             await EnsureMembershipClassesAsync(db, logger, cancellationToken);
+            await EnsureRolesAndAdminAsync(db, config, cancellationToken);
             await EnsureTreasuryAsync(db, config, logger, cancellationToken);
+            await DemoDaySeed.EnsureAsync(db, logger, cancellationToken);
             logger.LogInformation("CPCREDO seed already present.");
             return;
         }
@@ -139,7 +148,113 @@ public sealed class DataSeeder
         await EnsureSavingsProductsAsync(db, logger, cancellationToken);
         await EnsureMembershipClassesAsync(db, logger, cancellationToken);
         await EnsureTreasuryAsync(db, config, logger, cancellationToken);
+        await DemoDaySeed.EnsureAsync(db, logger, cancellationToken);
         logger.LogInformation("CPCREDO seed completed. Admin user: {Username}", adminUsername);
+    }
+
+    private static async Task BootstrapProductionAsync(
+        IServiceProvider services,
+        CpcredoDbContext db,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (!await db.Tenants.AnyAsync(t => t.Id == SeedGuids.TenantId, cancellationToken))
+        {
+            var tenant = new Tenant
+            {
+                Id = SeedGuids.TenantId,
+                Sigle = Letterhead.Sigle,
+                LegalName = Letterhead.LegalName,
+                City = Letterhead.City,
+                Country = Letterhead.Country,
+                PrimaryCurrency = Currencies.Htg,
+                SecondaryCurrency = Currencies.Usd,
+                DisplayTimeZone = CpcredoTimeZone.DisplayId,
+                ShareParValue = MembershipRules.DefaultShareParValue,
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            var branch = new Branch
+            {
+                Id = SeedGuids.BranchId,
+                TenantId = tenant.Id,
+                Code = Letterhead.DefaultBranchCode,
+                Name = Letterhead.DefaultBranchName,
+                City = Letterhead.City,
+                Country = Letterhead.Country,
+                IsHeadquarters = true,
+                IsActive = true,
+                CreatedAtUtc = tenant.CreatedAtUtc
+            };
+            db.Tenants.Add(tenant);
+            db.Branches.Add(branch);
+            await db.SaveChangesAsync(cancellationToken);
+            tenant.DefaultBranchId = branch.Id;
+            await db.SaveChangesAsync(cancellationToken);
+            logger.LogInformation("Production bootstrap: tenant and siège created.");
+        }
+
+        await EnsureChartOfAccountsAsync(db, cancellationToken);
+        await EnsureRolesOnlyAsync(db, cancellationToken);
+        await EnsureSavingsProductsAsync(db, logger, cancellationToken);
+
+        if (await db.Users.AnyAsync(cancellationToken))
+        {
+            logger.LogInformation("Production bootstrap: users already present; no demo seed.");
+            return;
+        }
+
+        var config = services.GetRequiredService<IConfiguration>();
+        var password = config["Seed:BootstrapAdminPassword"];
+        if (string.IsNullOrWhiteSpace(password))
+            password = GenerateOneTimePassword();
+        var hasher = new PasswordHasher<User>();
+        var admin = new User
+        {
+            Id = SeedGuids.AdminUserId,
+            TenantId = SeedGuids.TenantId,
+            BranchId = SeedGuids.BranchId,
+            Username = "admin",
+            Email = "admin@cpcredo.ht",
+            FullName = "Administrateur CPCREDO",
+            IsActive = true,
+            MustChangePassword = true,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        admin.PasswordHash = hasher.HashPassword(admin, password);
+        db.Users.Add(admin);
+        db.UserRoles.Add(new UserRole { UserId = admin.Id, RoleId = SeedGuids.RoleAdmin });
+        await db.SaveChangesAsync(cancellationToken);
+
+        var env = services.GetService<IHostEnvironment>();
+        var root = env?.ContentRootPath ?? AppContext.BaseDirectory;
+        var dir = Path.Combine(root, "data");
+        Directory.CreateDirectory(dir);
+        var once = Path.Combine(dir, "admin-initial-password.txt");
+        File.WriteAllText(once, $"username=admin{Environment.NewLine}password={password}{Environment.NewLine}");
+        logger.LogInformation("Administrateur initial créé. Mot de passe unique écrit dans data/admin-initial-password.txt (à supprimer après connexion).");
+    }
+
+    private static async Task EnsureRolesOnlyAsync(CpcredoDbContext db, CancellationToken cancellationToken)
+    {
+        var existing = await db.Roles.Select(r => r.Id).ToListAsync(cancellationToken);
+        var missing = CreateRoles().Where(r => existing.All(id => id != r.Id)).ToList();
+        if (missing.Count == 0)
+            return;
+        db.Roles.AddRange(missing);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static string GenerateOneTimePassword()
+    {
+        const string alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+        var bytes = new byte[8];
+        using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create())
+            rng.GetBytes(bytes);
+        var chars = new char[8];
+        for (var i = 0; i < chars.Length; i++)
+            chars[i] = alphabet[bytes[i] % alphabet.Length];
+        return new string(chars);
     }
 
     private static async Task EnsureSavingsProductsAsync(CpcredoDbContext db, ILogger logger, CancellationToken cancellationToken)
@@ -195,10 +310,7 @@ public sealed class DataSeeder
                 byId[spec.Id] = member;
             }
 
-            var backfill = created
-                || (member!.UpdatedAtUtc is null
-                    && member.LegalStatus == LegalStatus.Usager
-                    && spec.LegalStatus != LegalStatus.Usager);
+            var backfill = created;
 
             if (backfill)
             {
@@ -494,6 +606,40 @@ public sealed class DataSeeder
             db.GlAccounts.AddRange(children);
             await db.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private static async Task EnsureRolesAndAdminAsync(
+        CpcredoDbContext db,
+        IConfiguration config,
+        CancellationToken cancellationToken)
+    {
+        var existing = await db.Roles.Select(r => r.Id).ToListAsync(cancellationToken);
+        var missing = CreateRoles().Where(r => existing.All(id => id != r.Id)).ToList();
+        if (missing.Count > 0)
+        {
+            db.Roles.AddRange(missing);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        if (await db.Users.AnyAsync(u => u.Id == SeedGuids.AdminUserId, cancellationToken))
+            return;
+
+        var hasher = new PasswordHasher<User>();
+        var admin = new User
+        {
+            Id = SeedGuids.AdminUserId,
+            TenantId = SeedGuids.TenantId,
+            BranchId = SeedGuids.BranchId,
+            Username = config["Seed:AdminUsername"] ?? "admin",
+            Email = "admin@cpcredo.ht",
+            FullName = "Administrateur CPCREDO",
+            IsActive = true,
+            CreatedAtUtc = SeedInstant
+        };
+        admin.PasswordHash = hasher.HashPassword(admin, config["Seed:AdminPassword"] ?? "Admin@Cpcredo2026");
+        db.Users.Add(admin);
+        db.UserRoles.Add(new UserRole { UserId = admin.Id, RoleId = SeedGuids.RoleAdmin });
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static async Task EnsureTreasuryAsync(

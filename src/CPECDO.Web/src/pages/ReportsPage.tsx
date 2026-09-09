@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   downloadReport,
@@ -6,12 +7,14 @@ import {
   type DepositListing,
   type Financials,
   type Liquidity,
+  type ParCt90,
+  type RenewalRegister,
   type ReportKind,
   type ReportPayload,
   type TellerCashProof,
   type TrialBalance
 } from "../api/reports";
-import { formatMoney } from "../money";
+import { formatMoney, formatMoneyNumber } from "../money";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -21,11 +24,21 @@ function yearStart() {
   return `${new Date().getFullYear()}-01-01`;
 }
 
-const KINDS: ReportKind[] = ["teller-cash-proof", "trial-balance", "financials", "deposits", "liquidity"];
+const KINDS: ReportKind[] = [
+  "teller-cash-proof",
+  "trial-balance",
+  "financials",
+  "deposits",
+  "liquidity",
+  "par-ct90",
+  "renewal-register"
+];
 
 export function ReportsPage() {
   const { t } = useTranslation();
-  const [kind, setKind] = useState<ReportKind>("trial-balance");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const kindParam = searchParams.get("kind");
+  const kind: ReportKind = KINDS.includes(kindParam as ReportKind) ? (kindParam as ReportKind) : "trial-balance";
   const [asOf, setAsOf] = useState(today);
   const [from, setFrom] = useState(yearStart);
   const [currency, setCurrency] = useState("HTG");
@@ -55,9 +68,9 @@ export function ReportsPage() {
   }
 
   useEffect(() => {
-    void load();
+    void load(kind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [kind]);
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -83,8 +96,7 @@ export function ReportsPage() {
             value={kind}
             onChange={(e) => {
               const next = e.target.value as ReportKind;
-              setKind(next);
-              void load(next);
+              setSearchParams({ kind: next });
             }}
           >
             {KINDS.map((item) => (
@@ -94,7 +106,7 @@ export function ReportsPage() {
             ))}
           </select>
         </label>
-        {kind === "financials" || kind === "deposits" ? (
+        {kind === "financials" || kind === "deposits" || kind === "renewal-register" ? (
           <label>
             {t("reports.from")}
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -161,7 +173,8 @@ function ReportBody({ kind, report }: { kind: ReportKind; report: ReportPayload 
           t("reports.counted"),
           t("reports.overShort"),
           t("reports.deposits"),
-          t("reports.withdrawals")
+          t("reports.withdrawals"),
+          t("reports.internal")
         ]}
         rows={data.sessions.map((s) => [
           s.cashierName,
@@ -172,7 +185,10 @@ function ReportBody({ kind, report }: { kind: ReportKind; report: ReportPayload 
           s.countedCash == null ? "—" : formatMoney(s.countedCash, data.currencyCode),
           s.overShortAmount == null ? "—" : formatMoney(s.overShortAmount, data.currencyCode),
           formatMoney(s.deposits, data.currencyCode),
-          formatMoney(s.withdrawals, data.currencyCode)
+          formatMoney(s.withdrawals, data.currencyCode),
+          (s.internalMovements ?? [])
+            .map((m) => `${m.direction} ${formatMoney(m.amount, data.currencyCode)} (${m.status})`)
+            .join(" ; ") || "—"
         ])}
       />
     );
@@ -225,6 +241,58 @@ function ReportBody({ kind, report }: { kind: ReportKind; report: ReportPayload 
           row.cashierName ?? "—"
         ])}
         footer={["", "", "", "", t("reports.totals"), formatMoney(data.total, data.currencyCode), ""]}
+      />
+    );
+  }
+
+  if (kind === "par-ct90") {
+    const data = report as ParCt90;
+    const par = (b: ParCt90["par1"]) => [
+      `PAR ${b.days}`,
+      formatMoney(b.outstanding, data.currencyCode),
+      b.ratio == null ? t("reports.ratioNa") : `${formatMoneyNumber(b.ratio * 100)} %`
+    ];
+    return (
+      <MoneyTable
+        caption={`${t("reports.kind.par-ct90")} · ${data.asOf} · ${data.currencyCode}`}
+        headers={[t("reports.indicator"), t("reports.outstanding"), t("reports.ratio")]}
+        rows={[
+          [t("reports.ct90Portfolio"), formatMoney(data.portfolioOutstanding, data.currencyCode), `${data.loanCount}`],
+          par(data.par1),
+          par(data.par7),
+          par(data.par30)
+        ]}
+      />
+    );
+  }
+
+  if (kind === "renewal-register") {
+    const data = report as RenewalRegister;
+    return (
+      <MoneyTable
+        caption={`${t("reports.kind.renewal-register")} · ${data.from} → ${data.to}`}
+        headers={[
+          t("reports.date"),
+          t("reports.memberNo"),
+          t("reports.memberName"),
+          t("loans.loanNo"),
+          t("reports.newLoanNo"),
+          t("loans.cycle"),
+          t("reports.previousPrincipal"),
+          t("loans.principal"),
+          t("loans.evergreen")
+        ]}
+        rows={data.rows.map((row) => [
+          row.renewedAtUtc.slice(0, 10),
+          row.memberNo,
+          row.memberName,
+          row.oldLoanNo,
+          row.newLoanNo,
+          String(row.newCycle),
+          formatMoney(row.previousPrincipal, row.currencyCode),
+          formatMoney(row.newPrincipal, row.currencyCode),
+          row.isEvergreen ? t("loans.yes") : t("loans.no")
+        ])}
       />
     );
   }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { fetchLoans, type Loan } from "../api/loans";
@@ -9,6 +9,8 @@ const PIPELINE = ["Draft", "PendingApproval", "Approved", "Active"] as const;
 
 export function LoansPage() {
   const { t } = useTranslation();
+  const [params] = useSearchParams();
+  const vue = params.get("vue");
   const { session } = useAuth();
   const roles = session?.roles.map((r) => r.name) ?? [];
   const canWrite = roles.some((r) => ["Admin", "Gerant", "OfficierCredit"].includes(r));
@@ -41,7 +43,9 @@ export function LoansPage() {
 
   return (
     <main className="page">
-      <h1>{t("loans.pipeline")}</h1>
+      <h1>
+        {vue === "fiche" ? t("nav.loanFiche") : vue === "renouvellement" ? t("nav.loanRenew") : t("loans.pipeline")}
+      </h1>
       <p className="row-actions">
         {canWrite ? (
           <Link className="btn-primary" to="/credit/prets/nouveau">
@@ -98,7 +102,9 @@ export function LoansPage() {
               visible.map((loan) => (
                 <tr key={loan.id}>
                   <td>
-                    <Link to={`/credit/prets/${loan.id}`}>{loan.loanNo}</Link>
+                    <Link to={vue === "renouvellement" ? `/credit/prets/${loan.id}?vue=renouvellement` : `/credit/prets/${loan.id}`}>
+                      {loan.loanNo}
+                    </Link>
                   </td>
                   <td>
                     {loan.memberNo} — {loan.memberName}

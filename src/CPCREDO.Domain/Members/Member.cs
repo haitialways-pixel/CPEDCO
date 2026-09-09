@@ -17,6 +17,9 @@ public class Member
     public string AddressLine { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;
     public string? Commune { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
+    public string? PlaceOfBirth { get; set; }
+    public string? Occupation { get; set; }
     public MemberStatus Status { get; set; } = MemberStatus.Pending;
     public KycStatus KycStatus { get; set; } = KycStatus.Incomplete;
     public LegalStatus LegalStatus { get; set; } = LegalStatus.Usager;

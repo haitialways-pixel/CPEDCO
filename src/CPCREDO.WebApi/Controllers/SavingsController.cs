@@ -81,6 +81,29 @@ public sealed class SavingsController : ControllerBase
         return File(result.Value!.Content, "application/pdf", result.Value.FileName);
     }
 
+    [HttpPost("accounts/{accountId:guid}/livret.pdf")]
+    [Produces("application/pdf")]
+    public async Task<IActionResult> PrintLivret(
+        Guid accountId,
+        [FromQuery] DateOnly? from,
+        [FromQuery] DateOnly? to,
+        CancellationToken cancellationToken)
+    {
+        var result = await _savings.PrintLivretPdfAsync(accountId, from, to, cancellationToken);
+        if (!result.IsSuccess)
+        {
+            var body = new { code = result.ErrorCode, error = result.ErrorMessage };
+            return result.ErrorCode switch
+            {
+                "auth.unauthorized" => Unauthorized(body),
+                "savings.account.not_found" => NotFound(body),
+                _ => BadRequest(body)
+            };
+        }
+
+        return File(result.Value!.Content, "application/pdf", result.Value.FileName);
+    }
+
     [HttpPost("accounts/{accountId:guid}/holds")]
     [Authorize(Policy = "CanWrite")]
     [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status200OK)]

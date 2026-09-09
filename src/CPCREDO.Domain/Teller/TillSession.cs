@@ -17,6 +17,7 @@ public class TillSession
     public decimal? CountedCash { get; set; }
     public decimal? OverShortAmount { get; set; }
     public Guid? OverShortJournalId { get; set; }
+    public string? Notes { get; set; }
     public DateTime OpenedAtUtc { get; set; }
     public DateTime? ClosedAtUtc { get; set; }
 

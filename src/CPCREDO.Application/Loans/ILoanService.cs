@@ -1,4 +1,5 @@
 using CPCREDO.Application.Common;
+using CPCREDO.Application.Reports;
 
 namespace CPCREDO.Application.Loans;
 
@@ -27,4 +28,8 @@ public interface ILoanService
     Task<Result<AccrualResultDto>> RunAccrualAsync(CancellationToken cancellationToken = default);
 
     Task<Result<CollectionSheetDto>> GetCollectionSheetAsync(string? period, CancellationToken cancellationToken = default);
+
+    Task<Result<LoanDto>> RenewAsync(Guid id, string? idempotencyKey, CancellationToken cancellationToken = default);
+
+    Task<Result<ReportFileDto>> ExportCollectionSheetAsync(string? period, string format, CancellationToken cancellationToken = default);
 }

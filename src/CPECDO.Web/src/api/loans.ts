@@ -1,4 +1,4 @@
-import { getToken, parseError } from "./client";
+import { getToken, parseError, apiFetch } from "./client";
 
 export type LoanProduct = {
   id: string;
@@ -13,6 +13,7 @@ export type LoanProduct = {
   interestMethod: string;
   defaultRatePercent: number;
   maxRenewals: number | null;
+  renewalMaxOutstandingPercent: number | null;
   compulsorySavingsPercent: number;
   minPrincipal: number | null;
   maxPrincipal: number | null;
@@ -32,6 +33,7 @@ export type SaveLoanProduct = {
   repaymentFrequency: string;
   defaultRatePercent: number;
   maxRenewals?: number | null;
+  renewalMaxOutstandingPercent?: number | null;
   compulsorySavingsPercent: number;
   minPrincipal?: number | null;
   maxPrincipal?: number | null;
@@ -106,6 +108,23 @@ export type Loan = {
   rejectReason: string | null;
   daysPastDue: number;
   schedule: LoanSchedule;
+  isEvergreen: boolean;
+  renewal: {
+    canRenew: boolean;
+    statusActive: boolean;
+    dpdOk: boolean;
+    daysPastDue: number;
+    cycleOk: boolean;
+    cycleNumber: number;
+    maxRenewals: number | null;
+    noUnpaidPenalty: boolean;
+    unpaidPenalty: number;
+    kycActive: boolean;
+    outstandingOk: boolean;
+    outstandingPrincipal: number;
+    outstandingPercent: number;
+    renewalMaxOutstandingPercent: number | null;
+  };
 };
 
 export type LoanReceipt = {
@@ -180,21 +199,21 @@ async function read<T>(response: Response): Promise<T> {
 
 export async function fetchLoanProducts(activeOnly = false): Promise<LoanProduct[]> {
   const qs = activeOnly ? "?activeOnly=true" : "";
-  return read(await fetch(`/api/v1/loan-products${qs}`, { headers: headers() }));
+  return read(await apiFetch(`/api/v1/loan-products${qs}`, { headers: headers() }));
 }
 
 export async function createLoanProduct(body: SaveLoanProduct): Promise<LoanProduct> {
-  return read(await fetch("/api/v1/loan-products", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
+  return read(await apiFetch("/api/v1/loan-products", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
 }
 
 export async function updateLoanProduct(id: string, body: SaveLoanProduct): Promise<LoanProduct> {
   return read(
-    await fetch(`/api/v1/loan-products/${id}`, { method: "PUT", headers: headers(), body: JSON.stringify(body) })
+    await apiFetch(`/api/v1/loan-products/${id}`, { method: "PUT", headers: headers(), body: JSON.stringify(body) })
   );
 }
 
 export async function deactivateLoanProduct(id: string): Promise<LoanProduct> {
-  return read(await fetch(`/api/v1/loan-products/${id}/deactivate`, { method: "POST", headers: headers() }));
+  return read(await apiFetch(`/api/v1/loan-products/${id}/deactivate`, { method: "POST", headers: headers() }));
 }
 
 export async function fetchLoans(status?: string, memberId?: string): Promise<Loan[]> {
@@ -202,11 +221,11 @@ export async function fetchLoans(status?: string, memberId?: string): Promise<Lo
   if (status) params.set("status", status);
   if (memberId) params.set("memberId", memberId);
   const qs = params.toString();
-  return read(await fetch(`/api/v1/loans${qs ? `?${qs}` : ""}`, { headers: headers() }));
+  return read(await apiFetch(`/api/v1/loans${qs ? `?${qs}` : ""}`, { headers: headers() }));
 }
 
 export async function fetchLoan(id: string): Promise<Loan> {
-  return read(await fetch(`/api/v1/loans/${id}`, { headers: headers() }));
+  return read(await apiFetch(`/api/v1/loans/${id}`, { headers: headers() }));
 }
 
 export async function previewLoanSchedule(body: {
@@ -215,7 +234,7 @@ export async function previewLoanSchedule(body: {
   agreedRatePercent: number;
   startDate?: string;
 }): Promise<LoanSchedule> {
-  return read(await fetch("/api/v1/loans/preview", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
+  return read(await apiFetch("/api/v1/loans/preview", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
 }
 
 export async function previewPayoffQuote(
@@ -223,7 +242,7 @@ export async function previewPayoffQuote(
   daysElapsed: number
 ): Promise<PayoffQuote> {
   return read(
-    await fetch(`/api/v1/loans/payoff-quote?daysElapsed=${daysElapsed}`, {
+    await apiFetch(`/api/v1/loans/payoff-quote?daysElapsed=${daysElapsed}`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify(body)
@@ -237,23 +256,37 @@ export async function createLoanDraft(body: {
   principal: number;
   agreedRatePercent: number;
 }): Promise<Loan> {
-  return read(await fetch("/api/v1/loans", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
+  return read(await apiFetch("/api/v1/loans", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
 }
 
 export async function submitLoan(id: string): Promise<Loan> {
-  return read(await fetch(`/api/v1/loans/${id}/submit`, { method: "POST", headers: headers() }));
+  return read(await apiFetch(`/api/v1/loans/${id}/submit`, { method: "POST", headers: headers() }));
 }
 
 export async function approveLoan(id: string): Promise<Loan> {
-  return read(await fetch(`/api/v1/loans/${id}/approve`, { method: "POST", headers: headers() }));
+  return read(await apiFetch(`/api/v1/loans/${id}/approve`, { method: "POST", headers: headers() }));
 }
 
 export async function rejectLoan(id: string, reason?: string): Promise<Loan> {
   return read(
-    await fetch(`/api/v1/loans/${id}/reject`, {
+    await apiFetch(`/api/v1/loans/${id}/reject`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ reason })
+    })
+  );
+}
+
+export async function renewLoan(id: string): Promise<Loan> {
+  const token = getToken();
+  return read(
+    await apiFetch(`/api/v1/loans/${id}/renewals`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Idempotency-Key": crypto.randomUUID()
+      }
     })
   );
 }
@@ -265,7 +298,7 @@ export async function repayLoan(
 ): Promise<{ loan: Loan; receipt: LoanReceipt }> {
   const token = getToken();
   return read(
-    await fetch(`/api/v1/loans/${id}/repayments`, {
+    await apiFetch(`/api/v1/loans/${id}/repayments`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -278,17 +311,29 @@ export async function repayLoan(
 }
 
 export async function runLoanAccrual(): Promise<{ loansUpdated: number; asOf: string }> {
-  return read(await fetch("/api/v1/loans/run-accrual", { method: "POST", headers: headers() }));
+  return read(await apiFetch("/api/v1/loans/run-accrual", { method: "POST", headers: headers() }));
 }
 
 export async function fetchCollectionSheet(period: "today" | "week"): Promise<CollectionSheet> {
-  return read(await fetch(`/api/v1/loans/collection-sheet?period=${period}`, { headers: headers() }));
+  return read(await apiFetch(`/api/v1/loans/collection-sheet?period=${period}`, { headers: headers() }));
+}
+
+export async function downloadCollectionSheet(period: "today" | "week", format: "pdf" | "csv" = "pdf"): Promise<void> {
+  const response = await apiFetch(`/api/v1/loans/collection-sheet?period=${period}&format=${format}`, { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `recouvrement-${period}.${format}`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function disburseLoan(id: string, savingsAccountId?: string): Promise<Loan> {
   const token = getToken();
   return read(
-    await fetch(`/api/v1/loans/${id}/disburse`, {
+    await apiFetch(`/api/v1/loans/${id}/disburse`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

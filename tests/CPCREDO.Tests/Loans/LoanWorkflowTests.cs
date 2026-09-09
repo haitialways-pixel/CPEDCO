@@ -347,13 +347,18 @@ internal sealed class LoanHarness : IDisposable
         return created.Value!;
     }
 
-    public async Task<LoanProductDto> SeedProductAsync(decimal? officerMax = null)
+    public async Task<LoanProductDto> SeedProductAsync(
+        decimal? officerMax = null,
+        int? maxRenewals = null,
+        decimal? renewalMaxOutstandingPercent = null)
     {
         var previousRoles = User.Roles;
         var previousId = User.UserId;
         AsAdmin();
         var request = ProductRequest();
         request.OfficerMaxApproval = officerMax;
+        request.MaxRenewals = maxRenewals;
+        request.RenewalMaxOutstandingPercent = renewalMaxOutstandingPercent;
         var created = await Products.CreateAsync(request);
         Assert.True(created.IsSuccess, created.ErrorMessage);
         User.Roles = previousRoles;

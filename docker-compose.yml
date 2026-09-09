@@ -44,7 +44,7 @@ services:
 
   web:
     build:
-      context: ./src/CPCREDO.Web
+      context: ./src/CPECDO.Web
       dockerfile: Dockerfile
     container_name: cpcredo-web
     ports:

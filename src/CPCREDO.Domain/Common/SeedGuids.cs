@@ -37,6 +37,12 @@ public static class SeedGuids
     public static readonly Guid SavingsProductHtg = Guid.Parse("0c0ec0de-0001-4000-a000-000000000301");
     public static readonly Guid SavingsProductUsd = Guid.Parse("0c0ec0de-0001-4000-a000-000000000302");
 
+    public static readonly Guid LoanProductCt90 = Guid.Parse("0c0ec0de-0001-4000-a000-000000000310");
+    public static readonly Guid DemoTillId = Guid.Parse("0c0ec0de-0001-4000-a000-000000000501");
+    public static readonly Guid DemoSavingsMarie = Guid.Parse("0c0ec0de-0001-4000-a000-000000000502");
+    public static readonly Guid DemoLoanId = Guid.Parse("0c0ec0de-0001-4000-a000-000000000503");
+    public static readonly Guid DemoRepaymentId = Guid.Parse("0c0ec0de-0001-4000-a000-000000000504");
+
     public static readonly Guid BankBrhHtg = Guid.Parse("0c0ec0de-0001-4000-a000-000000000401");
     public static readonly Guid BankUnibankHtg = Guid.Parse("0c0ec0de-0001-4000-a000-000000000402");
     public static readonly Guid BankSogebankUsd = Guid.Parse("0c0ec0de-0001-4000-a000-000000000403");

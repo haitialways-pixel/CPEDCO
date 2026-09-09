@@ -67,16 +67,8 @@ export function LoginPage() {
           <button type="submit" disabled={busy}>
             {busy ? t("login.busy") : t("login.submit")}
           </button>
-          <p className="login-form__demo">
-            {t("login.demo")}
-            <br />
-            <code>admin</code> / <code>Admin@Cpcredo2026</code>
-            <br />
-            <code>gerant</code> / <code>Gerant@Cpcredo2026</code>
-            <br />
-            <code>caissier</code> / <code>Caissier@Cpcredo2026</code>
-          </p>
         </form>
+        <p className="app-footer app-footer--login">{t("letterhead.footer")}</p>
       </div>
     </div>
   );

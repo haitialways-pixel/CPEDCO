@@ -35,3 +35,12 @@ appsettings.Local.json
 
 ## Docker
 postgres-data/
+
+## KYC uploads (files on disk, never Postgres)
+src/CPCREDO.WebApi/data/
+
+## USB install output (contains hashed lock + binaries, never the install password)
+CPCREDO-USB/
+artifacts/
+**/admin-initial-password.txt
+**/install.lock

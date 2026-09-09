@@ -87,7 +87,7 @@ internal static class StatementPdf
 
                 page.Footer().AlignCenter().Text(text =>
                 {
-                    text.Span($"{Letterhead.Sigle} · {Letterhead.Line4} · ").FontSize(8);
+                    text.Span($"{Letterhead.Footer} · ").FontSize(7);
                     text.Span("page ");
                     text.CurrentPageNumber();
                     text.Span(" / ");

@@ -60,6 +60,27 @@ public sealed class ReportsController : ControllerBase
             () => _reports.GetDepositsAsync(from, to, currency, cancellationToken),
             () => _reports.ExportDepositsAsync(from, to, currency, format!, cancellationToken));
 
+    [HttpGet("par-ct90")]
+    public Task<IActionResult> ParCt90(
+        [FromQuery] DateOnly? asOf,
+        [FromQuery] string? format,
+        CancellationToken cancellationToken) =>
+        Respond(
+            format,
+            () => _reports.GetParCt90Async(asOf, cancellationToken),
+            () => _reports.ExportParCt90Async(asOf, format!, cancellationToken));
+
+    [HttpGet("renewal-register")]
+    public Task<IActionResult> RenewalRegister(
+        [FromQuery] DateOnly? from,
+        [FromQuery] DateOnly? to,
+        [FromQuery] string? format,
+        CancellationToken cancellationToken) =>
+        Respond(
+            format,
+            () => _reports.GetRenewalRegisterAsync(from, to, cancellationToken),
+            () => _reports.ExportRenewalRegisterAsync(from, to, format!, cancellationToken));
+
     [HttpGet("liquidity")]
     public Task<IActionResult> Liquidity(
         [FromQuery] DateOnly? asOf,

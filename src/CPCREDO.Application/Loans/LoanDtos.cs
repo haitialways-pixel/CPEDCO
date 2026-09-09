@@ -13,6 +13,7 @@ public sealed record LoanProductDto(
     string InterestMethod,
     decimal DefaultRatePercent,
     int? MaxRenewals,
+    decimal? RenewalMaxOutstandingPercent,
     decimal CompulsorySavingsPercent,
     decimal? MinPrincipal,
     decimal? MaxPrincipal,
@@ -32,6 +33,7 @@ public sealed record SaveLoanProductRequest
     public string RepaymentFrequency { get; set; } = "Weekly";
     public decimal DefaultRatePercent { get; set; } = 20m;
     public int? MaxRenewals { get; set; }
+    public decimal? RenewalMaxOutstandingPercent { get; set; }
     public decimal CompulsorySavingsPercent { get; set; } = 10m;
     public decimal? MinPrincipal { get; set; }
     public decimal? MaxPrincipal { get; set; }
@@ -137,7 +139,25 @@ public sealed record LoanDto(
     Guid? LienId,
     string? RejectReason,
     int DaysPastDue,
-    LoanScheduleDto Schedule);
+    LoanScheduleDto Schedule,
+    RenewalChecklistDto Renewal,
+    bool IsEvergreen);
+
+public sealed record RenewalChecklistDto(
+    bool CanRenew,
+    bool StatusActive,
+    bool DpdOk,
+    int DaysPastDue,
+    bool CycleOk,
+    int CycleNumber,
+    int? MaxRenewals,
+    bool NoUnpaidPenalty,
+    decimal UnpaidPenalty,
+    bool KycActive,
+    bool OutstandingOk,
+    decimal OutstandingPrincipal,
+    decimal OutstandingPercent,
+    decimal? RenewalMaxOutstandingPercent);
 
 public sealed record RepayLoanRequest
 {

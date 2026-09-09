@@ -1,3 +1,4 @@
+using System.Text;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Identity;
 using CPCREDO.Domain.Members;
@@ -96,6 +97,29 @@ public sealed class SavingsTests
         Assert.Equal(6000m, statement.Value.Entries[0].RunningBalance);
         Assert.Equal(5800m, statement.Value.Entries[1].RunningBalance);
         Assert.Equal(5800m, statement.Value.LedgerBalance);
+    }
+
+    [Fact]
+    public async Task Livret_pdf_uses_letterhead_and_stamps_last_print()
+    {
+        using var harness = new SavingsHarness();
+        var member = await harness.CreateMemberAsync("Claire", "Moreau", "CIN-S-LIV");
+        var product = (await harness.Savings.ListProductsAsync()).Value!.First();
+        var opened = await harness.Savings.OpenAccountAsync(member.Id, product.Id);
+        harness.Db.SavingsLedgerEntries.AddRange(
+            Entry(opened.Value!.Id, new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), "Credit", 5000m, "Dépôt"),
+            Entry(opened.Value.Id, new DateTime(2026, 9, 2, 0, 0, 0, DateTimeKind.Utc), "Debit", 200m, "Retrait"));
+        await harness.Db.SaveChangesAsync();
+
+        var pdf = await harness.Savings.PrintLivretPdfAsync(opened.Value.Id, null, null);
+        Assert.True(pdf.IsSuccess, pdf.ErrorMessage);
+        var text = Encoding.UTF8.GetString(pdf.Value!.Content);
+        Assert.Contains("CPCREDO", text);
+        Assert.True(pdf.Value.Content.Length > 800);
+
+        var stamped = await harness.Savings.GetAccountAsync(opened.Value.Id);
+        Assert.NotNull(stamped.Value!.LastPassbookPrintAtUtc);
+        Assert.StartsWith("livret-", pdf.Value.FileName);
     }
 
     [Fact]

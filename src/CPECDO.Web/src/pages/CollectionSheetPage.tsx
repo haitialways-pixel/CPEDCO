@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
-import { fetchCollectionSheet, runLoanAccrual, type CollectionSheet } from "../api/loans";
+import { downloadCollectionSheet, fetchCollectionSheet, runLoanAccrual, type CollectionSheet } from "../api/loans";
 import { formatMoney } from "../money";
 
 export function CollectionSheetPage() {
@@ -58,6 +58,14 @@ export function CollectionSheetPage() {
             {t("loans.runAccrual")}
           </button>
         ) : null}
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={busy}
+          onClick={() => void downloadCollectionSheet(period, "pdf").catch((err: unknown) => setError(err instanceof Error ? err.message : t("loans.error")))}
+        >
+          PDF
+        </button>
       </p>
       <div className="table-wrap">
         <table className="data-table data-table--static">

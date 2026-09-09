@@ -78,6 +78,7 @@ public static class DependencyInjection
             options.AddPolicy("AdminOnly", policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy("CanWrite", policy => policy.RequireRole(RoleNames.WriteRoles.ToArray()));
             options.AddPolicy("CanReverse", policy => policy.RequireRole(RoleNames.ReverseRoles.ToArray()));
+            options.AddPolicy("CanKycUpload", policy => policy.RequireRole(RoleNames.KycUploadRoles.ToArray()));
         });
 
         services.AddHttpContextAccessor();
@@ -92,6 +93,8 @@ public static class DependencyInjection
         services.AddScoped<IJournalService, JournalService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<IMemberService, MemberService>();
+        services.AddSingleton<IKycOverrideStore, KycOverrideStore>();
+        services.AddScoped<IKycDocumentService, KycDocumentService>();
         services.AddScoped<ISavingsService, SavingsService>();
         services.AddScoped<ITellerService, TellerService>();
         services.AddScoped<ITreasuryService, TreasuryService>();

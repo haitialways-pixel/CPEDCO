@@ -63,4 +63,19 @@ public interface IReportService
         string? currencyCode,
         string format,
         CancellationToken cancellationToken = default);
+
+    Task<Result<ParCt90Dto>> GetParCt90Async(DateOnly? asOf, CancellationToken cancellationToken = default);
+
+    Task<Result<ReportFileDto>> ExportParCt90Async(DateOnly? asOf, string format, CancellationToken cancellationToken = default);
+
+    Task<Result<RenewalRegisterDto>> GetRenewalRegisterAsync(
+        DateOnly? from,
+        DateOnly? to,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<ReportFileDto>> ExportRenewalRegisterAsync(
+        DateOnly? from,
+        DateOnly? to,
+        string format,
+        CancellationToken cancellationToken = default);
 }

@@ -20,7 +20,14 @@ public sealed record TellerCashProofSessionDto(
     decimal? OverShortAmount,
     IReadOnlyList<TellerCashProofCountDto> Counts,
     decimal Deposits,
-    decimal Withdrawals);
+    decimal Withdrawals,
+    IReadOnlyList<TellerCashProofInternalDto> InternalMovements);
+
+public sealed record TellerCashProofInternalDto(
+    string Direction,
+    string Status,
+    decimal Amount,
+    string? Counterparty);
 
 public sealed record TellerCashProofCountDto(
     decimal FaceValue,
@@ -67,6 +74,37 @@ public sealed record DepositListingDto(
     string CurrencyCode,
     IReadOnlyList<DepositListingRowDto> Rows,
     decimal Total);
+
+public sealed record ParBucketDto(
+    int Days,
+    decimal Outstanding,
+    decimal? Ratio);
+
+public sealed record ParCt90Dto(
+    DateOnly AsOf,
+    string CurrencyCode,
+    decimal PortfolioOutstanding,
+    int LoanCount,
+    ParBucketDto Par1,
+    ParBucketDto Par7,
+    ParBucketDto Par30);
+
+public sealed record RenewalRegisterRowDto(
+    DateTime RenewedAtUtc,
+    string MemberNo,
+    string MemberName,
+    string OldLoanNo,
+    string NewLoanNo,
+    int NewCycle,
+    decimal PreviousPrincipal,
+    decimal NewPrincipal,
+    bool IsEvergreen,
+    string CurrencyCode);
+
+public sealed record RenewalRegisterDto(
+    DateOnly From,
+    DateOnly To,
+    IReadOnlyList<RenewalRegisterRowDto> Rows);
 
 public sealed record LiquidityRatioDto(
     DateOnly AsOf,

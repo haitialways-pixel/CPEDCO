@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { fetchTransfers, type TreasuryTransfer } from "../api/treasury";
@@ -7,6 +7,8 @@ import { formatMoney } from "../money";
 
 export function TreasuryMovementsPage() {
   const { t } = useTranslation();
+  const [params] = useSearchParams();
+  const isJournal = params.get("vue") === "journal";
   const { session } = useAuth();
   const canCreate = session?.roles.some((r) => r.name === "Admin" || r.name === "Gerant") ?? false;
   const [transfers, setTransfers] = useState<TreasuryTransfer[]>([]);
@@ -20,8 +22,8 @@ export function TreasuryMovementsPage() {
 
   return (
     <main className="page">
-      <h1>{t("treasury.transfersTitle")}</h1>
-      {canCreate ? (
+      <h1>{isJournal ? t("nav.treasuryJournal") : t("treasury.transfersTitle")}</h1>
+      {canCreate && !isJournal ? (
         <p>
           <Link className="btn-primary" to="/tresorerie/mouvements/nouveau">
             {t("treasury.create")}

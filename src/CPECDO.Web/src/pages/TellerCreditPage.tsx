@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
-import { searchMembers, type MemberSummary } from "../api/members";
+import { fetchMember360, searchMembers, type KycDocument, type MemberSummary } from "../api/members";
+import { KycPieces } from "../components/KycPieces";
 import { fetchMemberSavings, type SavingsAccount } from "../api/savings";
 import { fetchCurrentTill, type TillSession } from "../api/teller";
 import { disburseLoan, fetchLoans, repayLoan, type Loan, type LoanReceipt } from "../api/loans";
@@ -61,6 +62,7 @@ function printLoanReceipt(receipt: LoanReceipt) {
     <tr><td>Caissier</td><td>${receipt.cashierName}</td></tr>
     <tr><td>Agence</td><td>${receipt.branchName}</td></tr>
   </table>
+  <p style="margin-top:1.4rem;font-size:10px;letter-spacing:.02em">CPCREDO — Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti</p>
   </body></html>`;
   const w = window.open("", "_blank", "width=480,height=640");
   if (!w) return;
@@ -72,15 +74,18 @@ function printLoanReceipt(receipt: LoanReceipt) {
 
 export function TellerCreditPage() {
   const { t } = useTranslation();
+  const location = useLocation();
   const { session } = useAuth();
   const roles = session?.roles.map((r) => r.name) ?? [];
   const canCollect = roles.some((r) => r === "Caissier" || r === "Gerant");
   const canDisburse = roles.includes("Caissier");
+  const isDisburse = location.pathname.includes("decaissement");
 
   const [till, setTill] = useState<TillSession | null>(null);
   const [query, setQuery] = useState("");
   const [members, setMembers] = useState<MemberSummary[]>([]);
   const [member, setMember] = useState<MemberSummary | null>(null);
+  const [kycDocuments, setKycDocuments] = useState<KycDocument[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loanId, setLoanId] = useState("");
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
@@ -92,7 +97,9 @@ export function TellerCreditPage() {
 
   const selected = useMemo(() => loans.find((l) => l.id === loanId) ?? null, [loans, loanId]);
   const figures = selected ? balances(selected) : null;
-  const actionable = loans.filter((l) => l.status === "Approved" || l.status === "Active");
+  const actionable = loans.filter((l) =>
+    isDisburse ? l.status === "Approved" : l.status === "Active"
+  );
 
   useEffect(() => {
     void fetchCurrentTill("HTG")
@@ -116,6 +123,7 @@ export function TellerCreditPage() {
 
   async function selectMember(item: MemberSummary) {
     setMember(item);
+    setKycDocuments([]);
     setLoanId("");
     setAmount("");
     setConfirmPay(false);
@@ -123,12 +131,18 @@ export function TellerCreditPage() {
     setError(null);
     try {
       const list = await fetchLoans(undefined, item.id);
-      const next = list.filter((l) => l.status === "Approved" || l.status === "Active");
+      const next = list.filter((l) => (isDisburse ? l.status === "Approved" : l.status === "Active"));
       setLoans(next);
       setLoanId(next[0]?.id ?? "");
       const savings = await fetchMemberSavings(item.id);
       setAccounts(savings);
       setSavingsAccountId(savings[0]?.id ?? "");
+      try {
+        const profile = await fetchMember360(item.id);
+        setKycDocuments(profile.kycDocuments ?? []);
+      } catch {
+        setKycDocuments([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("teller.error"));
     } finally {
@@ -189,7 +203,7 @@ export function TellerCreditPage() {
       <p>
         <Link to="/teller">{t("teller.backTill")}</Link>
       </p>
-      <h1>{t("teller.creditTitle")}</h1>
+      <h1>{isDisburse ? t("nav.disburse") : t("teller.creditTitle")}</h1>
       {error ? (
         <p className="login-form__error" role="alert">
           {error}
@@ -230,6 +244,14 @@ export function TellerCreditPage() {
           <p>
             <strong>{member.fullName}</strong> ({member.memberNo})
           </p>
+          <KycPieces
+            memberId={member.id}
+            documents={kycDocuments}
+            onChanged={async () => {
+              const profile = await fetchMember360(member.id);
+              setKycDocuments(profile.kycDocuments ?? []);
+            }}
+          />
           {actionable.length === 0 ? (
             <p>{t("teller.noCreditToCollect")}</p>
           ) : (
@@ -273,7 +295,7 @@ export function TellerCreditPage() {
                 </section>
               ) : null}
 
-              {selected?.status === "Approved" && canDisburse ? (
+              {isDisburse && selected?.status === "Approved" && canDisburse ? (
                 <form className="stack-form" onSubmit={(event) => void onDisburse(event)}>
                   <h2>{t("loans.disburse")}</h2>
                   {selected.compulsorySavingsPercent > 0 ? (
@@ -295,7 +317,7 @@ export function TellerCreditPage() {
                 </form>
               ) : null}
 
-              {selected?.status === "Active" && canCollect ? (
+              {!isDisburse && selected?.status === "Active" && canCollect ? (
                 <form className="stack-form" onSubmit={(event) => void onCollect(event)}>
                   <h2>{t("teller.creditPay")}</h2>
                   <p className="muted">{t("loans.repayHint")}</p>
@@ -324,7 +346,7 @@ export function TellerCreditPage() {
                 </form>
               ) : null}
 
-              {selected?.status === "Approved" && !canDisburse ? (
+              {isDisburse && selected?.status === "Approved" && !canDisburse ? (
                 <p className="muted">{t("teller.disburseCashierOnly")}</p>
               ) : null}
             </>

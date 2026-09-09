@@ -23,4 +23,22 @@ public interface ITellerService
         CashPostRequest request,
         string? idempotencyKey,
         CancellationToken cancellationToken = default);
+
+    Task<Result<IReadOnlyList<OpenTillPeerDto>>> ListOpenTillsAsync(
+        string? currencyCode,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<IReadOnlyList<InternalCashMovementDto>>> ListInternalMovementsAsync(
+        string? currencyCode,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<InternalCashMovementDto>> CreateInternalMovementAsync(
+        CreateInternalCashRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<InternalCashMovementDto>> AcceptInternalMovementAsync(
+        Guid movementId,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
 }

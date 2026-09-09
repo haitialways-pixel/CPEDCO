@@ -1,4 +1,4 @@
-import { getToken, parseError } from "./client";
+import { getToken, parseError, apiFetch } from "./client";
 
 function headers(): HeadersInit {
   const token = getToken();
@@ -13,7 +13,14 @@ function params(values: Record<string, string | undefined>): string {
   return search.toString();
 }
 
-export type ReportKind = "teller-cash-proof" | "trial-balance" | "financials" | "deposits" | "liquidity";
+export type ReportKind =
+  | "teller-cash-proof"
+  | "trial-balance"
+  | "financials"
+  | "deposits"
+  | "liquidity"
+  | "par-ct90"
+  | "renewal-register";
 
 export type TrialBalanceRow = {
   glAccountId: string;
@@ -50,6 +57,7 @@ export type TellerCashProof = {
     deposits: number;
     withdrawals: number;
     counts: { faceValue: number; quantity: number; subtotal: number }[];
+    internalMovements: { direction: string; status: string; amount: number; counterparty: string | null }[];
   }[];
 };
 
@@ -98,13 +106,47 @@ export type Liquidity = {
   ratio: number | null;
 };
 
-export type ReportPayload = TrialBalance | TellerCashProof | Financials | DepositListing | Liquidity;
+export type ParCt90 = {
+  asOf: string;
+  currencyCode: string;
+  portfolioOutstanding: number;
+  loanCount: number;
+  par1: { days: number; outstanding: number; ratio: number | null };
+  par7: { days: number; outstanding: number; ratio: number | null };
+  par30: { days: number; outstanding: number; ratio: number | null };
+};
+
+export type RenewalRegister = {
+  from: string;
+  to: string;
+  rows: {
+    renewedAtUtc: string;
+    memberNo: string;
+    memberName: string;
+    oldLoanNo: string;
+    newLoanNo: string;
+    newCycle: number;
+    previousPrincipal: number;
+    newPrincipal: number;
+    isEvergreen: boolean;
+    currencyCode: string;
+  }[];
+};
+
+export type ReportPayload =
+  | TrialBalance
+  | TellerCashProof
+  | Financials
+  | DepositListing
+  | Liquidity
+  | ParCt90
+  | RenewalRegister;
 
 export async function fetchReport(
   kind: ReportKind,
   query: Record<string, string | undefined>
 ): Promise<ReportPayload> {
-  const response = await fetch(`/api/v1/reports/${kind}?${params(query)}`, { headers: headers() });
+  const response = await apiFetch(`/api/v1/reports/${kind}?${params(query)}`, { headers: headers() });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as ReportPayload;
 }
@@ -114,7 +156,7 @@ export async function downloadReport(
   format: "pdf" | "csv",
   query: Record<string, string | undefined>
 ): Promise<void> {
-  const response = await fetch(`/api/v1/reports/${kind}?${params({ ...query, format })}`, { headers: headers() });
+  const response = await apiFetch(`/api/v1/reports/${kind}?${params({ ...query, format })}`, { headers: headers() });
   if (!response.ok) throw new Error(await parseError(response));
   const blob = await response.blob();
   const disposition = response.headers.get("content-disposition") ?? "";

@@ -39,7 +39,31 @@ public sealed record SavingsAccountDto(
     bool IsBlocked,
     string? BlockedReason,
     DateTime OpenedAtUtc,
+    DateTime? LastPassbookPrintAtUtc,
     IReadOnlyList<SavingsHoldDto> Holds);
+
+public sealed record LivretLineDto(
+    DateTime ValueDateUtc,
+    string Description,
+    decimal Debit,
+    decimal Credit,
+    decimal RunningBalance,
+    string CashierName);
+
+public sealed record LivretDto(
+    Guid AccountId,
+    string AccountNo,
+    string ProductName,
+    string CurrencyCode,
+    string MemberNo,
+    string MemberName,
+    DateOnly From,
+    DateOnly To,
+    decimal AvailableBalance,
+    DateTime? LastOperationAtUtc,
+    decimal? LastOperationAmount,
+    string? LastOperationType,
+    IReadOnlyList<LivretLineDto> Lines);
 
 public sealed record StatementPdfDto(
     byte[] Content,

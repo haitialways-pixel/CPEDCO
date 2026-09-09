@@ -1,6 +1,8 @@
 using CPCREDO.Application.Accounting;
 using CPCREDO.Application.Common;
 using CPCREDO.Application.Loans;
+using CPCREDO.Application.Reports;
+using CPCREDO.Infrastructure.Reports;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Identity;
 using CPCREDO.Domain.Loans;
@@ -524,6 +526,100 @@ public sealed class LoanService : ILoanService
         return Result<AccrualResultDto>.Ok(new AccrualResultDto(loans.Count, asOf));
     }
 
+    public async Task<Result<LoanDto>> RenewAsync(Guid id, string? idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        _ = idempotencyKey;
+        var gate = RequireWriter();
+        if (!gate.IsSuccess)
+            return Result<LoanDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
+
+        var loan = await LoadLoanAsync(id, tracking: true, cancellationToken);
+        if (loan is null)
+            return Result<LoanDto>.Fail("loan.not_found", "Dossier de crédit introuvable.");
+        if (loan.RenewedToLoanId is not null)
+            return Result<LoanDto>.Fail("loan.already_renewed", "Ce crédit a déjà été renouvelé.");
+
+        var member = await _db.Members.FirstOrDefaultAsync(
+            m => m.Id == loan.MemberId && m.TenantId == _currentUser.TenantId, cancellationToken);
+        if (member is null)
+            return Result<LoanDto>.Fail("loan.member_not_found", "Membre introuvable.");
+
+        var check = EvaluateRenewal(loan, member);
+        if (!check.Checklist.CanRenew)
+            return Result<LoanDto>.Fail(check.ErrorCode!, check.ErrorMessage!);
+
+        var remainingPrincipal = MoneyAmount.Normalize(loan.Installments.Sum(LoanRepaymentAllocator.RemainingPrincipal));
+        var newPrincipal = remainingPrincipal > 0m ? remainingPrincipal : loan.Principal;
+
+        var built = await BuildScheduleAsync(new PreviewLoanRequest
+        {
+            ProductId = loan.ProductId,
+            Principal = newPrincipal,
+            AgreedRatePercent = loan.AgreedRatePercent
+        }, cancellationToken);
+        if (!built.IsSuccess)
+            return Result<LoanDto>.Fail(built.ErrorCode!, built.ErrorMessage!);
+
+        var product = built.Value!.Product;
+        var schedule = built.Value.Schedule;
+        var renewal = new Loan
+        {
+            TenantId = loan.TenantId,
+            BranchId = loan.BranchId,
+            MemberId = loan.MemberId,
+            ProductId = product.Id,
+            LoanNo = await NextLoanNoAsync(cancellationToken),
+            Principal = schedule.Principal,
+            AgreedRatePercent = schedule.AgreedRatePercent,
+            RateAppliesToTermDays = product.TermDays,
+            TermDays = product.TermDays,
+            InstallmentCount = product.InstallmentCount,
+            RepaymentFrequency = product.RepaymentFrequency,
+            InterestMethod = loan.InterestMethod,
+            TotalInterest = schedule.TotalInterest,
+            TotalDue = schedule.TotalDue,
+            CurrencyCode = loan.CurrencyCode,
+            Status = LoanStatus.Approved,
+            CycleNumber = loan.CycleNumber + 1,
+            RenewedFromLoanId = loan.Id,
+            OriginationDate = schedule.Installments[0].DueDate.AddDays(-7),
+            CreatedByUserId = _currentUser.UserId!.Value,
+            CreatedAtUtc = _clock.UtcNow,
+            CompulsorySavingsPercent = product.CompulsorySavingsPercent,
+            SubmittedByUserId = _currentUser.UserId,
+            SubmittedAtUtc = _clock.UtcNow,
+            Approver1Id = _currentUser.UserId,
+            Approved1AtUtc = _clock.UtcNow,
+            Product = product
+        };
+        foreach (var line in schedule.Installments)
+        {
+            renewal.Installments.Add(new LoanInstallment
+            {
+                LoanId = renewal.Id,
+                LineNo = line.LineNo,
+                DueDate = line.DueDate,
+                PrincipalDue = line.PrincipalDue,
+                InterestDue = line.InterestDue,
+                TotalDue = line.TotalDue
+            });
+        }
+
+        loan.Status = LoanStatus.Renewed;
+        loan.RenewedToLoanId = renewal.Id;
+        _db.Loans.Add(renewal);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Loan.Renewed",
+            nameof(Loan),
+            loan.Id,
+            new { oldLoanNo = loan.LoanNo, newLoanNo = renewal.LoanNo, renewal.CycleNumber, newPrincipal },
+            loan.TenantId,
+            _currentUser.UserId,
+            cancellationToken: cancellationToken);
+        return Result<LoanDto>.Ok(await MapAsync(renewal, cancellationToken));
+    }
+
     public async Task<Result<CollectionSheetDto>> GetCollectionSheetAsync(
         string? period,
         CancellationToken cancellationToken = default)
@@ -583,6 +679,50 @@ public sealed class LoanService : ILoanService
             rows));
     }
 
+    public async Task<Result<ReportFileDto>> ExportCollectionSheetAsync(
+        string? period,
+        string format,
+        CancellationToken cancellationToken = default)
+    {
+        var data = await GetCollectionSheetAsync(period, cancellationToken);
+        if (!data.IsSuccess)
+            return Result<ReportFileDto>.Fail(data.ErrorCode!, data.ErrorMessage!);
+        var sheet = data.Value!;
+        var headers = new[] { "N° prêt", "Membre", "Nom", "Produit", "Échéance", "Capital", "Intérêt", "Pénalité", "Reste dû", "DPD" };
+        var rows = sheet.Rows.Select(r => (IReadOnlyList<string>)
+        [
+            r.LoanNo,
+            r.MemberNo,
+            r.MemberName,
+            r.ProductName,
+            r.DueDate.ToString("yyyy-MM-dd"),
+            MoneyDisplay.Format(r.PrincipalRemaining, Currencies.Htg),
+            MoneyDisplay.Format(r.InterestRemaining, Currencies.Htg),
+            MoneyDisplay.Format(r.PenaltyRemaining, Currencies.Htg),
+            MoneyDisplay.Format(r.TotalRemaining, Currencies.Htg),
+            r.DaysPastDue.ToString()
+        ]).ToList();
+        var kind = (format ?? "pdf").Trim().ToLowerInvariant();
+        var title = sheet.Period == "week" ? "Feuille de recouvrement — semaine" : "Feuille de recouvrement — jour";
+        var subtitle = $"Du {sheet.From:yyyy-MM-dd} au {sheet.To:yyyy-MM-dd}";
+        var stub = $"recouvrement-{sheet.Period}-{sheet.From:yyyy-MM-dd}";
+        if (kind is "csv" or "text/csv")
+        {
+            return Result<ReportFileDto>.Ok(new ReportFileDto(
+                ReportCsv.Render(headers, rows),
+                "text/csv; charset=utf-8",
+                $"{stub}.csv"));
+        }
+
+        if (kind is not "pdf" and not "application/pdf")
+            return Result<ReportFileDto>.Fail("report.format", "Format non supporté. Utilisez pdf ou csv.");
+
+        return Result<ReportFileDto>.Ok(new ReportFileDto(
+            ReportPdf.Render(title, subtitle, headers, rows),
+            "application/pdf",
+            $"{stub}.pdf"));
+    }
+
     private async Task<Result<BuiltSchedule>> BuildScheduleAsync(PreviewLoanRequest request, CancellationToken cancellationToken)
     {
         var auth = RequireUser();
@@ -626,7 +766,7 @@ public sealed class LoanService : ILoanService
         if (!MembershipRules.IsKycActive(member.KycStatus))
             return Result<bool>.Fail("loan.kyc_not_active", "Le KYC doit être actif (vérifié) pour un crédit.");
         if (!MembershipRules.AllowsMicro90(member.LegalStatus))
-            return Result<bool>.Fail("member.usager_micro90", "Micro90 est interdit aux usagers. Conversion en sociétaire requise.");
+            return Result<bool>.Fail("member.usager_micro90", "CT90 est interdit aux usagers. Conversion en sociétaire requise.");
         if (MembershipRules.ServicesBlocked(member, _clock.UtcNow))
             return Result<bool>.Fail("member.usager_expired", "Période d’usage échue : conversion en sociétaire requise avant tout service.");
         return Result<bool>.Ok(true);
@@ -826,8 +966,100 @@ public sealed class LoanService : ILoanService
             loan.LienId,
             loan.RejectReason,
             LoanDelinquency.DaysPastDue(loan.Installments, _clock.TodayInPortAuPrince()),
-            schedule);
+            schedule,
+            EvaluateRenewal(loan, member).Checklist,
+            await IsEvergreenAsync(loan, cancellationToken));
     }
+
+    private async Task<bool> IsEvergreenAsync(Loan loan, CancellationToken cancellationToken)
+    {
+        if (loan.CycleNumber < LoanEvergreen.MinCycle || loan.RenewedFromLoanId is null)
+            return false;
+        var previous = await _db.Loans.AsNoTracking()
+            .Where(l => l.Id == loan.RenewedFromLoanId)
+            .Select(l => (decimal?)l.Principal)
+            .FirstOrDefaultAsync(cancellationToken);
+        return LoanEvergreen.Matches(loan.CycleNumber, loan.Principal, previous);
+    }
+
+    private RenewalEvaluation EvaluateRenewal(Loan loan, Member? member)
+    {
+        var today = _clock.TodayInPortAuPrince();
+        var dpd = LoanDelinquency.DaysPastDue(loan.Installments, today);
+        var unpaidPenalty = MoneyAmount.Normalize(loan.Installments.Sum(LoanRepaymentAllocator.RemainingPenalty));
+        var outstanding = MoneyAmount.Normalize(loan.Installments.Sum(LoanRepaymentAllocator.RemainingPrincipal));
+        var outstandingPercent = loan.Principal <= 0m
+            ? 0m
+            : MoneyAmount.Normalize(outstanding / loan.Principal * 100m);
+        var maxOutstanding = loan.Product?.RenewalMaxOutstandingPercent;
+        var maxRenewals = loan.Product?.MaxRenewals;
+        var statusActive = loan.Status == LoanStatus.Active;
+        var dpdOk = dpd <= 7;
+        var cycleOk = maxRenewals is null || loan.CycleNumber < maxRenewals.Value;
+        var noPenalty = unpaidPenalty == 0m;
+        var kycActive = member is not null
+                        && member.Status == MemberStatus.Active
+                        && MembershipRules.IsKycActive(member.KycStatus);
+        var outstandingOk = outstanding == 0m
+                            || (maxOutstanding is not null && outstandingPercent <= maxOutstanding.Value);
+        var checklist = new RenewalChecklistDto(
+            statusActive && dpdOk && cycleOk && noPenalty && kycActive && outstandingOk,
+            statusActive,
+            dpdOk,
+            dpd,
+            cycleOk,
+            loan.CycleNumber,
+            maxRenewals,
+            noPenalty,
+            unpaidPenalty,
+            kycActive,
+            outstandingOk,
+            outstanding,
+            outstandingPercent,
+            maxOutstanding);
+
+        string code;
+        string message;
+        if (!statusActive)
+        {
+            code = "loan.not_active";
+            message = "Seul un crédit actif peut être renouvelé.";
+        }
+        else if (!dpdOk)
+        {
+            code = "loan.dpd";
+            message = "Renouvellement refusé : DPD supérieur à 7 jours.";
+        }
+        else if (!cycleOk)
+        {
+            code = "loan.max_renewals";
+            message = "Le nombre maximal de renouvellements est atteint.";
+        }
+        else if (!noPenalty)
+        {
+            code = "loan.unpaid_penalty";
+            message = "Une pénalité impayée bloque le renouvellement.";
+        }
+        else if (!kycActive)
+        {
+            code = "loan.kyc_not_active";
+            message = "Le KYC doit être actif (vérifié) pour un renouvellement.";
+        }
+        else if (!outstandingOk)
+        {
+            code = "loan.outstanding";
+            message = "L’encours dépasse le plafond autorisé pour un renouvellement.";
+        }
+        else
+        {
+            code = "";
+            message = "";
+        }
+
+        return new RenewalEvaluation(checklist, code, message);
+    }
+
+    private sealed record RenewalEvaluation(RenewalChecklistDto Checklist, string ErrorCode, string ErrorMessage);
 
     private Result<bool> RequireUser()
     {

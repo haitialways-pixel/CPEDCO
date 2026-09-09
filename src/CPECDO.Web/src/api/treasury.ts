@@ -1,4 +1,4 @@
-import { getToken, parseError } from "./client";
+import { getToken, parseError, apiFetch } from "./client";
 
 export type BankAccount = {
   id: string;
@@ -97,35 +97,35 @@ async function read<T>(response: Response): Promise<T> {
 }
 
 export async function fetchBankNames(): Promise<string[]> {
-  return read(await fetch("/api/v1/treasury/bank-names", { headers: headers() }));
+  return read(await apiFetch("/api/v1/treasury/bank-names", { headers: headers() }));
 }
 
 export async function fetchBanks(): Promise<BankAccount[]> {
-  return read(await fetch("/api/v1/treasury/banks", { headers: headers() }));
+  return read(await apiFetch("/api/v1/treasury/banks", { headers: headers() }));
 }
 
 export async function createBank(body: SaveBankAccount): Promise<BankAccount> {
-  return read(await fetch("/api/v1/treasury/banks", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
+  return read(await apiFetch("/api/v1/treasury/banks", { method: "POST", headers: headers(), body: JSON.stringify(body) }));
 }
 
 export async function updateBank(id: string, body: SaveBankAccount): Promise<BankAccount> {
-  return read(await fetch(`/api/v1/treasury/banks/${id}`, { method: "PUT", headers: headers(), body: JSON.stringify(body) }));
+  return read(await apiFetch(`/api/v1/treasury/banks/${id}`, { method: "PUT", headers: headers(), body: JSON.stringify(body) }));
 }
 
 export async function deactivateBank(id: string): Promise<BankAccount> {
-  return read(await fetch(`/api/v1/treasury/banks/${id}/deactivate`, { method: "POST", headers: headers() }));
+  return read(await apiFetch(`/api/v1/treasury/banks/${id}/deactivate`, { method: "POST", headers: headers() }));
 }
 
 export async function fetchVaults(): Promise<VaultBalance[]> {
-  return read(await fetch("/api/v1/treasury/vaults", { headers: headers() }));
+  return read(await apiFetch("/api/v1/treasury/vaults", { headers: headers() }));
 }
 
 export async function fetchTransfers(): Promise<TreasuryTransfer[]> {
-  return read(await fetch("/api/v1/treasury/transfers", { headers: headers() }));
+  return read(await apiFetch("/api/v1/treasury/transfers", { headers: headers() }));
 }
 
 export async function fetchTransfer(id: string): Promise<TreasuryTransfer> {
-  return read(await fetch(`/api/v1/treasury/transfers/${id}`, { headers: headers() }));
+  return read(await apiFetch(`/api/v1/treasury/transfers/${id}`, { headers: headers() }));
 }
 
 export async function createTransfer(body: {
@@ -136,7 +136,7 @@ export async function createTransfer(body: {
   notes?: string;
 }): Promise<TreasuryTransfer> {
   return read(
-    await fetch("/api/v1/treasury/transfers", {
+    await apiFetch("/api/v1/treasury/transfers", {
       method: "POST",
       headers: headers(),
       body: JSON.stringify(body)
@@ -145,7 +145,7 @@ export async function createTransfer(body: {
 }
 
 export async function approveTransfer(id: string): Promise<TreasuryTransfer> {
-  return read(await fetch(`/api/v1/treasury/transfers/${id}/approve`, { method: "POST", headers: headers() }));
+  return read(await apiFetch(`/api/v1/treasury/transfers/${id}/approve`, { method: "POST", headers: headers() }));
 }
 
 export async function attachSlip(
@@ -157,7 +157,7 @@ export async function attachSlip(
   form.append("slipRef", body.slipRef);
   if (body.slipType) form.append("slipType", body.slipType);
   return read(
-    await fetch(`/api/v1/treasury/transfers/${id}/slip`, {
+    await apiFetch(`/api/v1/treasury/transfers/${id}/slip`, {
       method: "POST",
       headers: headers(undefined, false),
       body: form
@@ -167,7 +167,7 @@ export async function attachSlip(
 
 export async function executeTransfer(id: string, password?: string): Promise<TreasuryTransfer> {
   return read(
-    await fetch(`/api/v1/treasury/transfers/${id}/execute`, {
+    await apiFetch(`/api/v1/treasury/transfers/${id}/execute`, {
       method: "POST",
       headers: headers(crypto.randomUUID()),
       body: JSON.stringify({ password })
@@ -177,7 +177,7 @@ export async function executeTransfer(id: string, password?: string): Promise<Tr
 
 export async function cancelTransfer(id: string, reason: string): Promise<TreasuryTransfer> {
   return read(
-    await fetch(`/api/v1/treasury/transfers/${id}/cancel`, {
+    await apiFetch(`/api/v1/treasury/transfers/${id}/cancel`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ reason })
@@ -186,7 +186,7 @@ export async function cancelTransfer(id: string, reason: string): Promise<Treasu
 }
 
 export async function fetchSlipObjectUrl(id: string): Promise<string> {
-  const response = await fetch(`/api/v1/treasury/transfers/${id}/slip`, { headers: headers(undefined, false) });
+  const response = await apiFetch(`/api/v1/treasury/transfers/${id}/slip`, { headers: headers(undefined, false) });
   if (!response.ok) throw new Error(await parseError(response));
   const blob = await response.blob();
   return URL.createObjectURL(blob);
@@ -196,7 +196,7 @@ export async function downloadTreasuryJournal(format: "pdf" | "csv", from?: stri
   const search = new URLSearchParams({ format });
   if (from) search.set("from", from);
   if (to) search.set("to", to);
-  const response = await fetch(`/api/v1/treasury/journal?${search}`, { headers: headers() });
+  const response = await apiFetch(`/api/v1/treasury/journal?${search}`, { headers: headers() });
   if (!response.ok) throw new Error(await parseError(response));
   const blob = await response.blob();
   const disposition = response.headers.get("content-disposition") ?? "";

@@ -95,6 +95,7 @@ public sealed class LoanProductService : ILoanProductService
         product.RepaymentFrequency = next.RepaymentFrequency;
         product.DefaultRatePercent = next.DefaultRatePercent;
         product.MaxRenewals = next.MaxRenewals;
+        product.RenewalMaxOutstandingPercent = next.RenewalMaxOutstandingPercent;
         product.CompulsorySavingsPercent = next.CompulsorySavingsPercent;
         product.MinPrincipal = next.MinPrincipal;
         product.MaxPrincipal = next.MaxPrincipal;
@@ -143,6 +144,8 @@ public sealed class LoanProductService : ILoanProductService
             return Result<LoanProduct>.Fail("loan.product_rate", "Le taux ne peut pas être négatif.");
         if (request.CompulsorySavingsPercent < 0m)
             return Result<LoanProduct>.Fail("loan.product_savings", "L’épargne obligatoire ne peut pas être négative.");
+        if (request.RenewalMaxOutstandingPercent is < 0m or > 100m)
+            return Result<LoanProduct>.Fail("loan.product_renewal_outstanding", "Le plafond d’encours de renouvellement doit être entre 0 et 100 %.");
         if (!Enum.TryParse<RepaymentFrequency>(request.RepaymentFrequency, true, out var frequency))
             frequency = RepaymentFrequency.Weekly;
 
@@ -158,6 +161,7 @@ public sealed class LoanProductService : ILoanProductService
             InterestMethod = InterestMethod.FlatOnOriginalPrincipalForTerm,
             DefaultRatePercent = request.DefaultRatePercent,
             MaxRenewals = request.MaxRenewals,
+            RenewalMaxOutstandingPercent = request.RenewalMaxOutstandingPercent,
             CompulsorySavingsPercent = request.CompulsorySavingsPercent,
             MinPrincipal = request.MinPrincipal,
             MaxPrincipal = request.MaxPrincipal,
@@ -182,6 +186,7 @@ public sealed class LoanProductService : ILoanProductService
             p.InterestMethod.ToString(),
             p.DefaultRatePercent,
             p.MaxRenewals,
+            p.RenewalMaxOutstandingPercent,
             p.CompulsorySavingsPercent,
             p.MinPrincipal,
             p.MaxPrincipal,

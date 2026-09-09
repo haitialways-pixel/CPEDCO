@@ -554,6 +554,20 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(128)")
                         .HasColumnName("commune");
 
+                    b.Property<DateOnly?>("DateOfBirth")
+                        .HasColumnType("date")
+                        .HasColumnName("date_of_birth");
+
+                    b.Property<string>("PlaceOfBirth")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("place_of_birth");
+
+                    b.Property<string>("Occupation")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("occupation");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
@@ -738,6 +752,62 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                     b.ToTable("member_tickets", (string)null);
                 });
 
+            modelBuilder.Entity("CPCREDO.Domain.Members.KycDocument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("content_type");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("file_path");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("type");
+
+                    b.Property<DateTime>("UploadedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("uploaded_at_utc");
+
+                    b.Property<Guid>("UploadedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploaded_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_kyc_documents");
+
+                    b.HasIndex("UploadedBy")
+                        .HasDatabaseName("ix_kyc_documents_uploaded_by");
+
+                    b.HasIndex("MemberId", "Type")
+                        .IsUnique()
+                        .HasDatabaseName("ix_kyc_documents_member_id_type");
+
+                    b.HasIndex("TenantId", "MemberId")
+                        .HasDatabaseName("ix_kyc_documents_tenant_id_member_id");
+
+                    b.ToTable("kyc_documents", (string)null);
+                });
+
             modelBuilder.Entity("CPCREDO.Domain.Members.NumberSequence", b =>
                 {
                     b.Property<Guid>("Id")
@@ -893,6 +963,10 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("OpenedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("opened_at_utc");
+
+                    b.Property<DateTime?>("LastPassbookPrintAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_passbook_print_at_utc");
 
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid")
@@ -1104,6 +1178,111 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                     b.ToTable("savings_products", (string)null);
                 });
 
+            modelBuilder.Entity("CPCREDO.Domain.Teller.InternalCashMovement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("AcceptedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at_utc");
+
+                    b.Property<Guid?>("AcceptedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("accepted_by_user_id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("branch_id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency_code");
+
+                    b.Property<Guid?>("DestinationTillSessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("destination_till_session_id");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("direction");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<Guid?>("JournalEntryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("journal_entry_id");
+
+                    b.Property<string>("MovementNo")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("movement_no");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("note");
+
+                    b.Property<Guid?>("SourceTillSessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_till_session_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_internal_cash_movements");
+
+                    b.HasIndex("CreatedByUserId")
+                        .HasDatabaseName("ix_internal_cash_movements_created_by_user_id");
+
+                    b.HasIndex("DestinationTillSessionId")
+                        .HasDatabaseName("ix_internal_cash_movements_destination_till_session_id");
+
+                    b.HasIndex("SourceTillSessionId")
+                        .HasDatabaseName("ix_internal_cash_movements_source_till_session_id");
+
+                    b.HasIndex("TenantId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_internal_cash_movements_tenant_id_idempotency_key")
+                        .HasFilter("idempotency_key IS NOT NULL");
+
+                    b.HasIndex("TenantId", "MovementNo")
+                        .IsUnique()
+                        .HasDatabaseName("ix_internal_cash_movements_tenant_id_movement_no");
+
+                    b.ToTable("internal_cash_movements", (string)null);
+                });
+
             modelBuilder.Entity("CPCREDO.Domain.Teller.TillCountLine", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1161,6 +1340,11 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasPrecision(19, 4)
                         .HasColumnType("numeric(19,4)")
                         .HasColumnName("expected_cash");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("notes");
 
                     b.Property<DateTime>("OpenedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -1928,6 +2112,11 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("max_renewals");
 
+                    b.Property<decimal?>("RenewalMaxOutstandingPercent")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("renewal_max_outstanding_percent");
+
                     b.Property<decimal?>("MinPrincipal")
                         .HasPrecision(19, 4)
                         .HasColumnType("numeric(19,4)")
@@ -2222,6 +2411,27 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                     b.Navigation("Member");
                 });
 
+            modelBuilder.Entity("CPCREDO.Domain.Members.KycDocument", b =>
+                {
+                    b.HasOne("CPCREDO.Domain.Members.Member", "Member")
+                        .WithMany()
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_kyc_documents_members_member_id");
+
+                    b.HasOne("CPCREDO.Domain.Identity.User", "UploadedByUser")
+                        .WithMany()
+                        .HasForeignKey("UploadedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_kyc_documents_users_uploaded_by");
+
+                    b.Navigation("Member");
+
+                    b.Navigation("UploadedByUser");
+                });
+
             modelBuilder.Entity("CPCREDO.Domain.Members.ShareAccount", b =>
                 {
                     b.HasOne("CPCREDO.Domain.Tenancy.Branch", null)
@@ -2315,6 +2525,34 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_savings_products_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("CPCREDO.Domain.Teller.InternalCashMovement", b =>
+                {
+                    b.HasOne("CPCREDO.Domain.Identity.User", "CreatedByUser")
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_internal_cash_movements_users_created_by_user_id");
+
+                    b.HasOne("CPCREDO.Domain.Teller.TillSession", "DestinationTillSession")
+                        .WithMany()
+                        .HasForeignKey("DestinationTillSessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_internal_cash_movements_till_sessions_destination_till_session_id");
+
+                    b.HasOne("CPCREDO.Domain.Teller.TillSession", "SourceTillSession")
+                        .WithMany()
+                        .HasForeignKey("SourceTillSessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_internal_cash_movements_till_sessions_source_till_session_id");
+
+                    b.Navigation("CreatedByUser");
+
+                    b.Navigation("DestinationTillSession");
+
+                    b.Navigation("SourceTillSession");
                 });
 
             modelBuilder.Entity("CPCREDO.Domain.Teller.TillCountLine", b =>

@@ -503,7 +503,42 @@ export function Member360Page() {
 
           <section className="card-block">
             <h2>{t("service.loans")}</h2>
-            <p className="muted">{member.loansPlaceholder ?? t("service.loansNone")}</p>
+            {!member.loans || member.loans.length === 0 ? (
+              <p className="muted">{member.loansPlaceholder ?? t("service.loansNone")}</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table data-table--static">
+                  <thead>
+                    <tr>
+                      <th>{t("loans.loanNo")}</th>
+                      <th>{t("loans.status")}</th>
+                      <th>{t("loans.cycle")}</th>
+                      <th>{t("loans.remainingRenewals")}</th>
+                      <th>{t("loans.principal")}</th>
+                      <th>{t("loans.evergreen")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {member.loans.map((loan) => (
+                      <tr key={loan.id}>
+                        <td>
+                          <Link to={`/credit/prets/${loan.id}`}>{loan.loanNo}</Link>
+                        </td>
+                        <td>{t(`loans.status.${loan.status}`, { defaultValue: loan.status })}</td>
+                        <td>{loan.cycleNumber}</td>
+                        <td>
+                          {loan.remainingRenewals == null
+                            ? t("loans.unlimited")
+                            : String(loan.remainingRenewals)}
+                        </td>
+                        <td>{money(loan.principal, loan.currencyCode)}</td>
+                        <td>{loan.isEvergreen ? t("loans.yes") : t("loans.no")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
 
           {canServiceClient ? (

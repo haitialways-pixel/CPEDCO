@@ -1,5 +1,5 @@
 import type { StaffUser } from "./types";
-import { parseError } from "./client";
+import { parseError, apiFetch } from "./client";
 
 const headers = (token: string) => ({
   Authorization: `Bearer ${token}`,
@@ -7,7 +7,7 @@ const headers = (token: string) => ({
 });
 
 export async function fetchStaff(token: string): Promise<StaffUser[]> {
-  const response = await fetch("/api/v1/staff", { headers: headers(token) });
+  const response = await apiFetch("/api/v1/staff", { headers: headers(token) });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as StaffUser[];
 }
@@ -19,7 +19,7 @@ export async function createStaff(token: string, request: {
   password: string;
   roleName: string;
 }): Promise<StaffUser> {
-  const response = await fetch("/api/v1/staff", {
+  const response = await apiFetch("/api/v1/staff", {
     method: "POST",
     headers: headers(token),
     body: JSON.stringify(request)
@@ -29,7 +29,7 @@ export async function createStaff(token: string, request: {
 }
 
 export async function assignStaffRole(token: string, id: string, roleName: string): Promise<StaffUser> {
-  const response = await fetch(`/api/v1/staff/${id}/role`, {
+  const response = await apiFetch(`/api/v1/staff/${id}/role`, {
     method: "PUT",
     headers: headers(token),
     body: JSON.stringify({ roleName })
@@ -39,13 +39,13 @@ export async function assignStaffRole(token: string, id: string, roleName: strin
 }
 
 export async function disableStaff(token: string, id: string): Promise<StaffUser> {
-  const response = await fetch(`/api/v1/staff/${id}/disable`, { method: "POST", headers: headers(token) });
+  const response = await apiFetch(`/api/v1/staff/${id}/disable`, { method: "POST", headers: headers(token) });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as StaffUser;
 }
 
 export async function resetStaffPassword(token: string, id: string, newPassword: string): Promise<StaffUser> {
-  const response = await fetch(`/api/v1/staff/${id}/reset-password`, {
+  const response = await apiFetch(`/api/v1/staff/${id}/reset-password`, {
     method: "POST",
     headers: headers(token),
     body: JSON.stringify({ newPassword })

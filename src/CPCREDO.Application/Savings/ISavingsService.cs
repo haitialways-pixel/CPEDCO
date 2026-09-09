@@ -24,6 +24,12 @@ public interface ISavingsService
         DateOnly to,
         CancellationToken cancellationToken = default);
 
+    Task<Result<StatementPdfDto>> PrintLivretPdfAsync(
+        Guid accountId,
+        DateOnly? from,
+        DateOnly? to,
+        CancellationToken cancellationToken = default);
+
     Task<Result<SavingsAccountDto>> PlaceHoldAsync(
         Guid accountId,
         PlaceHoldRequest request,

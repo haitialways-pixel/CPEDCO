@@ -20,6 +20,7 @@ const emptyForm = {
   repaymentFrequency: "Weekly",
   defaultRatePercent: "20",
   maxRenewals: "",
+  renewalMaxOutstandingPercent: "",
   compulsorySavingsPercent: "10",
   minPrincipal: "",
   maxPrincipal: "",
@@ -87,6 +88,8 @@ export function LoanProductsPage() {
       repaymentFrequency: product.repaymentFrequency,
       defaultRatePercent: String(product.defaultRatePercent),
       maxRenewals: product.maxRenewals == null ? "" : String(product.maxRenewals),
+      renewalMaxOutstandingPercent:
+        product.renewalMaxOutstandingPercent == null ? "" : String(product.renewalMaxOutstandingPercent),
       compulsorySavingsPercent: String(product.compulsorySavingsPercent),
       minPrincipal: product.minPrincipal == null ? "" : String(product.minPrincipal),
       maxPrincipal: product.maxPrincipal == null ? "" : String(product.maxPrincipal),
@@ -113,6 +116,7 @@ export function LoanProductsPage() {
       repaymentFrequency: form.repaymentFrequency,
       defaultRatePercent: Number(form.defaultRatePercent),
       maxRenewals: optionalNumber(form.maxRenewals) === null ? null : Number(form.maxRenewals),
+      renewalMaxOutstandingPercent: optionalNumber(form.renewalMaxOutstandingPercent),
       compulsorySavingsPercent: Number(form.compulsorySavingsPercent),
       minPrincipal: optionalNumber(form.minPrincipal),
       maxPrincipal: optionalNumber(form.maxPrincipal),
@@ -238,6 +242,17 @@ export function LoanProductsPage() {
               value={form.maxRenewals}
               onChange={(e) => set("maxRenewals", e.target.value)}
               placeholder={t("loans.unlimited")}
+            />
+          </label>
+          <label>
+            {t("loans.renewalMaxOutstanding")}
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              value={form.renewalMaxOutstandingPercent}
+              onChange={(e) => set("renewalMaxOutstandingPercent", e.target.value)}
             />
           </label>
           <label>

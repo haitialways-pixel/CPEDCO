@@ -119,8 +119,8 @@ public sealed class AuthService : IAuthService
         CancellationToken cancellationToken = default)
     {
         var newPassword = request.NewPassword ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(request.CurrentPassword) || newPassword.Length < 8)
-            return Result<bool>.Fail("auth.password_invalid", "Le nouveau mot de passe doit contenir au moins 8 caractères.");
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword) || newPassword.Length < 10)
+            return Result<bool>.Fail("auth.password_invalid", "Le nouveau mot de passe doit contenir au moins 10 caractères.");
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null || !user.IsActive)

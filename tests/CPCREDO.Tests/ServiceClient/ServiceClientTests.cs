@@ -176,7 +176,7 @@ internal sealed class ServiceClientHarness : IDisposable
         User = new TestCurrentUser { Roles = [RoleNames.ServiceClient] };
         var clock = new FixedClock();
         var audit = new AuditLogger(Db, clock, User);
-        Members = new MemberService(Db, User, clock, audit, new JournalService(Db, User, clock, audit));
+        Members = new MemberService(Db, User, clock, audit, new JournalService(Db, User, clock, audit), new KycOverrideStore());
         Savings = new SavingsService(Db, User, clock, audit);
     }
 

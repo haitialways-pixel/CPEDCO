@@ -158,6 +158,43 @@ public sealed class MembershipTests
     }
 
     [Fact]
+    public async Task Identity_is_locked_for_officier_and_caissier_cannot_create()
+    {
+        using var harness = new MembershipHarness();
+        var created = await harness.Members.CreateAsync(
+            Request("Anne", "Lamothe", "CIN-LOCK", status: MemberStatus.Active, legal: LegalStatus.Societaire, shares: 1));
+        Assert.True(created.IsSuccess, created.ErrorMessage);
+
+        harness.User.Roles = [RoleNames.OfficierCredit];
+        var locked = await harness.Members.UpdateAsync(
+            created.Value!.Id,
+            Request("Anna", "Lamothe", "CIN-LOCK", status: MemberStatus.Active, legal: LegalStatus.Societaire, shares: 1));
+        Assert.False(locked.IsSuccess);
+        Assert.Equal("member.locked", locked.ErrorCode);
+
+        harness.User.Roles = [RoleNames.Caissier];
+        var cannotCreate = await harness.Members.CreateAsync(Request("Paul", "Test", "CIN-LOCK-2"));
+        Assert.False(cannotCreate.IsSuccess);
+        Assert.Equal("auth.forbidden", cannotCreate.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Identity_update_by_gerant_writes_before_after_audit()
+    {
+        using var harness = new MembershipHarness();
+        var created = await harness.Members.CreateAsync(
+            Request("Anne", "Lamothe", "CIN-AUD", status: MemberStatus.Active, legal: LegalStatus.Societaire, shares: 1));
+        var updated = await harness.Members.UpdateAsync(
+            created.Value!.Id,
+            Request("Anna", "Lamothe", "CIN-AUD", status: MemberStatus.Active, legal: LegalStatus.Societaire, shares: 1));
+        Assert.True(updated.IsSuccess, updated.ErrorMessage);
+        Assert.Equal("Anna", updated.Value!.FirstName);
+        var log = harness.Db.AuditLogs.Single(a => a.Action == "Member.Updated");
+        Assert.Contains("Anne", log.DetailsJson);
+        Assert.Contains("Anna", log.DetailsJson);
+    }
+
+    [Fact]
     public async Task Commissaire_is_read_only()
     {
         using var harness = new MembershipHarness();
@@ -251,7 +288,7 @@ internal sealed class MembershipHarness : IDisposable
         Clock = new FixedClock { UtcNow = now };
         var audit = new AuditLogger(Db, Clock, User);
         var journals = new JournalService(Db, User, Clock, audit);
-        Members = new MemberService(Db, User, Clock, audit, journals);
+        Members = new MemberService(Db, User, Clock, audit, journals, new KycOverrideStore());
     }
 
     public void Dispose() => Db.Dispose();

@@ -103,6 +103,18 @@ public sealed class LoansController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpPost("{id:guid}/renewals")]
+    [Authorize(Policy = "CanWrite")]
+    [RequiresIdempotencyKey]
+    public async Task<ActionResult<LoanDto>> Renew(Guid id, CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var result = await _loans.RenewAsync(id, key, cancellationToken);
+        if (result.IsSuccess)
+            return CreatedAtAction(nameof(Get), new { id = result.Value!.Id }, result.Value);
+        return ToActionResult(result);
+    }
+
     [HttpPost("{id:guid}/repayments")]
     [Authorize(Policy = "CanWrite")]
     [RequiresIdempotencyKey]
@@ -125,12 +137,28 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpGet("collection-sheet")]
-    public async Task<ActionResult<CollectionSheetDto>> CollectionSheet(
+    public async Task<IActionResult> CollectionSheet(
         [FromQuery] string? period,
+        [FromQuery] string? format,
         CancellationToken cancellationToken)
     {
+        var kind = (format ?? "json").Trim().ToLowerInvariant();
+        if (kind is "pdf" or "csv" or "application/pdf" or "text/csv")
+        {
+            var exported = await _loans.ExportCollectionSheetAsync(period, format!, cancellationToken);
+            if (!exported.IsSuccess)
+            {
+                var fail = new { code = exported.ErrorCode, error = exported.ErrorMessage };
+                return exported.ErrorCode == "auth.unauthorized" ? Unauthorized(fail) : BadRequest(fail);
+            }
+            return File(exported.Value!.Content, exported.Value.ContentType, exported.Value.FileName);
+        }
+
         var result = await _loans.GetCollectionSheetAsync(period, cancellationToken);
-        return ToActionResult(result);
+        if (result.IsSuccess)
+            return Ok(result.Value);
+        var body = new { code = result.ErrorCode, error = result.ErrorMessage };
+        return result.ErrorCode == "auth.unauthorized" ? Unauthorized(body) : BadRequest(body);
     }
 
     private ActionResult<T> ToActionResult<T>(Result<T> result)

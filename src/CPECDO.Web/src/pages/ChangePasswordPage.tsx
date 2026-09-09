@@ -57,7 +57,7 @@ export function ChangePasswordPage() {
             <input
               type="password"
               autoComplete="new-password"
-              minLength={8}
+              minLength={10}
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
               required

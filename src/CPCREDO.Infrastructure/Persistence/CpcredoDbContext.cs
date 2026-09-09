@@ -26,6 +26,7 @@ public class CpcredoDbContext : DbContext
     public DbSet<Member> Members => Set<Member>();
     public DbSet<ShareAccount> ShareAccounts => Set<ShareAccount>();
     public DbSet<MemberTicket> MemberTickets => Set<MemberTicket>();
+    public DbSet<KycDocument> KycDocuments => Set<KycDocument>();
     public DbSet<SavingsProduct> SavingsProducts => Set<SavingsProduct>();
     public DbSet<SavingsAccount> SavingsAccounts => Set<SavingsAccount>();
     public DbSet<SavingsLien> SavingsLiens => Set<SavingsLien>();
@@ -36,6 +37,7 @@ public class CpcredoDbContext : DbContext
     public DbSet<JournalLine> JournalLines => Set<JournalLine>();
     public DbSet<TillSession> TillSessions => Set<TillSession>();
     public DbSet<TillCountLine> TillCountLines => Set<TillCountLine>();
+    public DbSet<InternalCashMovement> InternalCashMovements => Set<InternalCashMovement>();
     public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
     public DbSet<TreasuryTransfer> TreasuryTransfers => Set<TreasuryTransfer>();
     public DbSet<LoanProduct> LoanProducts => Set<LoanProduct>();
@@ -194,6 +196,8 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.AddressLine).HasMaxLength(256).IsRequired();
             b.Property(x => x.City).HasMaxLength(128).IsRequired();
             b.Property(x => x.Commune).HasMaxLength(128);
+            b.Property(x => x.PlaceOfBirth).HasMaxLength(128);
+            b.Property(x => x.Occupation).HasMaxLength(128);
             b.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
             b.Property(x => x.KycStatus).HasConversion<string>().HasMaxLength(16);
             b.Property(x => x.LegalStatus).HasConversion<string>().HasMaxLength(16);
@@ -239,6 +243,20 @@ public class CpcredoDbContext : DbContext
             b.HasOne(x => x.AssignedTo).WithMany().HasForeignKey(x => x.AssignedToUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<KycDocument>(b =>
+        {
+            b.ToTable("kyc_documents");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.Type).HasConversion<string>().HasMaxLength(16);
+            b.Property(x => x.FilePath).HasMaxLength(512).IsRequired();
+            b.Property(x => x.ContentType).HasMaxLength(128).IsRequired();
+            b.HasIndex(x => new { x.MemberId, x.Type }).IsUnique();
+            b.HasIndex(x => new { x.TenantId, x.MemberId });
+            b.HasOne(x => x.Member).WithMany().HasForeignKey(x => x.MemberId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedBy).OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<ShareAccount>(b =>
         {
             b.ToTable("share_accounts");
@@ -278,6 +296,7 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
             b.Property(x => x.MinimumBalance).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.BlockedReason).HasMaxLength(256);
+            b.Property(x => x.LastPassbookPrintAtUtc);
             b.Ignore(x => x.LedgerBalance);
             b.Ignore(x => x.AvailableBalance);
             b.HasIndex(x => new { x.TenantId, x.AccountNo }).IsUnique();
@@ -341,6 +360,7 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.ExpectedCash).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.CountedCash).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.OverShortAmount).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.Notes).HasMaxLength(512);
             b.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             if (npgsql)
@@ -359,6 +379,30 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.FaceValue).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Ignore(x => x.Subtotal);
             b.HasOne(x => x.TillSession).WithMany(t => t.CountLines).HasForeignKey(x => x.TillSessionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<InternalCashMovement>(b =>
+        {
+            b.ToTable("internal_cash_movements");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.MovementNo).HasMaxLength(32).IsRequired();
+            b.Property(x => x.Direction).HasConversion<string>().HasMaxLength(16);
+            b.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
+            b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
+            b.Property(x => x.Amount).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.Note).HasMaxLength(512);
+            b.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            b.HasIndex(x => new { x.TenantId, x.MovementNo }).IsUnique();
+            if (npgsql)
+            {
+                b.HasIndex(x => new { x.TenantId, x.IdempotencyKey })
+                    .IsUnique()
+                    .HasFilter("idempotency_key IS NOT NULL");
+            }
+            b.HasOne(x => x.SourceTillSession).WithMany().HasForeignKey(x => x.SourceTillSessionId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne(x => x.DestinationTillSession).WithMany().HasForeignKey(x => x.DestinationTillSessionId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 
@@ -427,6 +471,7 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.MinPrincipal).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.MaxPrincipal).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.OfficerMaxApproval).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.RenewalMaxOutstandingPercent).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Ignore(x => x.DisplayName);
             b.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         });

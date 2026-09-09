@@ -20,6 +20,7 @@ public sealed class TellerController : ControllerBase
 
     [HttpPost("open")]
     [Authorize(Policy = "CanWrite")]
+    [RequiresIdempotencyKey]
     public async Task<ActionResult<TillSessionDto>> Open([FromBody] OpenTillRequest request, CancellationToken cancellationToken)
     {
         var result = await _teller.OpenAsync(request, cancellationToken);
@@ -70,6 +71,48 @@ public sealed class TellerController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("open")]
+    public async Task<ActionResult<IReadOnlyList<OpenTillPeerDto>>> OpenTills(
+        [FromQuery] string? currency,
+        CancellationToken cancellationToken)
+    {
+        var result = await _teller.ListOpenTillsAsync(currency, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("internal-movements")]
+    public async Task<ActionResult<IReadOnlyList<InternalCashMovementDto>>> InternalMovements(
+        [FromQuery] string? currency,
+        CancellationToken cancellationToken)
+    {
+        var result = await _teller.ListInternalMovementsAsync(currency, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("internal-movements")]
+    [Authorize(Policy = "CanWrite")]
+    [RequiresIdempotencyKey]
+    public async Task<ActionResult<InternalCashMovementDto>> CreateInternal(
+        [FromBody] CreateInternalCashRequest request,
+        CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var result = await _teller.CreateInternalMovementAsync(request, key, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("internal-movements/{id:guid}/accept")]
+    [Authorize(Policy = "CanWrite")]
+    [RequiresIdempotencyKey]
+    public async Task<ActionResult<InternalCashMovementDto>> AcceptInternal(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var result = await _teller.AcceptInternalMovementAsync(id, key, cancellationToken);
+        return ToActionResult(result);
+    }
+
     private ActionResult<T> ToActionResult<T>(Result<T> result)
     {
         if (result.IsSuccess)
@@ -80,8 +123,10 @@ public sealed class TellerController : ControllerBase
         {
             "auth.unauthorized" => Unauthorized(body),
             "auth.forbidden" => StatusCode(StatusCodes.Status403Forbidden, body),
-            "till.not_found" or "savings.account.not_found" => NotFound(body),
-            "till.not_open" or "teller.insufficient" or "till.already_open" or "till.already_closed" or "savings.blocked" => Conflict(body),
+            "till.not_found" or "savings.account.not_found" or "internal.not_found" => NotFound(body),
+            "till.not_open" or "teller.insufficient" or "till.already_open" or "till.already_closed" or "savings.blocked"
+                or "internal.already_accepted" or "internal.same_till" or "internal.insufficient"
+                or "internal.insufficient_vault" or "till.pending_internal" => Conflict(body),
             _ => BadRequest(body)
         };
     }

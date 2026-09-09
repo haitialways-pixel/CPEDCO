@@ -117,6 +117,12 @@ public sealed class StaffTests
             "Password!123",
             RoleNames.Caissier));
 
+        var tooShort = await harness.Auth.ChangePasswordAsync(
+            created.Value!.Id,
+            new ChangePasswordRequest("Password!123", "Short9ch"));
+        Assert.False(tooShort.IsSuccess);
+        Assert.Equal("auth.password_invalid", tooShort.ErrorCode);
+
         var changed = await harness.Auth.ChangePasswordAsync(
             created.Value!.Id,
             new ChangePasswordRequest("Password!123", "Changed!456"));

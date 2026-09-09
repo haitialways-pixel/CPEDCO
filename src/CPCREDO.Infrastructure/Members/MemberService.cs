@@ -4,9 +4,11 @@ using CPCREDO.Application.Members;
 using CPCREDO.Application.Savings;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Identity;
+using CPCREDO.Domain.Loans;
 using CPCREDO.Domain.Members;
 using CPCREDO.Domain.Savings;
 using CPCREDO.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace CPCREDO.Infrastructure.Members;
@@ -18,19 +20,25 @@ public sealed class MemberService : IMemberService
     private readonly IClock _clock;
     private readonly IAuditLogger _audit;
     private readonly IJournalService _journals;
+    private readonly IKycOverrideStore _overrides;
+    private readonly PasswordHasher<User> _hasher = new();
+    private static readonly string DummyHash =
+        new PasswordHasher<User>().HashPassword(new User { Username = "dummy" }, "CpcredoDummyPassword!1");
 
     public MemberService(
         CpcredoDbContext db,
         ICurrentUser currentUser,
         IClock clock,
         IAuditLogger audit,
-        IJournalService journals)
+        IJournalService journals,
+        IKycOverrideStore overrides)
     {
         _db = db;
         _currentUser = currentUser;
         _clock = clock;
         _audit = audit;
         _journals = journals;
+        _overrides = overrides;
     }
 
     public async Task<Result<MemberListDto>> SearchAsync(
@@ -107,7 +115,7 @@ public sealed class MemberService : IMemberService
 
     public async Task<Result<Member360Dto>> CreateAsync(MemberWriteRequest request, CancellationToken cancellationToken = default)
     {
-        var gate = RequireWriter();
+        var gate = RequireCreator();
         if (!gate.IsSuccess)
             return Result<Member360Dto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
 
@@ -157,6 +165,9 @@ public sealed class MemberService : IMemberService
             AddressLine = request.AddressLine.Trim(),
             City = string.IsNullOrWhiteSpace(request.City) ? Letterhead.City : request.City.Trim(),
             Commune = NormalizeOptional(request.Commune),
+            DateOfBirth = request.DateOfBirth,
+            PlaceOfBirth = NormalizeOptional(request.PlaceOfBirth),
+            Occupation = NormalizeOptional(request.Occupation),
             Status = status,
             KycStatus = request.KycStatus ?? KycStatus.Incomplete,
             LegalStatus = legal,
@@ -197,7 +208,11 @@ public sealed class MemberService : IMemberService
         return await Get360Async(member.Id, cancellationToken);
     }
 
-    public async Task<Result<Member360Dto>> UpdateAsync(Guid id, MemberWriteRequest request, CancellationToken cancellationToken = default)
+    public async Task<Result<Member360Dto>> UpdateAsync(
+        Guid id,
+        MemberWriteRequest request,
+        Guid? overrideGrantId = null,
+        CancellationToken cancellationToken = default)
     {
         var gate = RequireWriter();
         if (!gate.IsSuccess)
@@ -211,6 +226,12 @@ public sealed class MemberService : IMemberService
         var member = await LoadAsync(id, tenantId, cancellationToken);
         if (member is null)
             return Result<Member360Dto>.Fail("member.not_found", "Membre introuvable.");
+
+        var identityGate = AuthorizeIdentityEdit(member, overrideGrantId);
+        if (!identityGate.IsSuccess)
+            return Result<Member360Dto>.Fail(identityGate.ErrorCode!, identityGate.ErrorMessage!);
+
+        var before = SnapshotIdentity(member);
 
         var duplicate = await FindDuplicateAsync(tenantId, request, excludeId: id, cancellationToken);
         if (duplicate is not null)
@@ -234,9 +255,13 @@ public sealed class MemberService : IMemberService
         member.Nif = NormalizeOptional(request.Nif);
         member.Phone = request.Phone.Trim();
         member.AlternatePhone = NormalizeOptional(request.AlternatePhone);
+
         member.AddressLine = request.AddressLine.Trim();
         member.City = string.IsNullOrWhiteSpace(request.City) ? member.City : request.City.Trim();
         member.Commune = NormalizeOptional(request.Commune);
+        member.DateOfBirth = request.DateOfBirth;
+        member.PlaceOfBirth = NormalizeOptional(request.PlaceOfBirth);
+        member.Occupation = NormalizeOptional(request.Occupation);
         if (request.Status is not null)
             member.Status = request.Status.Value;
         if (request.KycStatus is not null)
@@ -273,11 +298,20 @@ public sealed class MemberService : IMemberService
             return classError;
 
         await _db.SaveChangesAsync(cancellationToken);
+        var after = SnapshotIdentity(member);
         await _audit.LogAsync(
             "Member.Updated",
             nameof(Member),
             member.Id,
-            new { member.MemberNo },
+            new
+            {
+                member.MemberNo,
+                actor = _currentUser.Username,
+                authorizedBy = identityGate.Value?.AuthorizedByUsername,
+                authorizedByUserId = identityGate.Value?.AuthorizedByUserId,
+                before,
+                after
+            },
             tenantId,
             _currentUser.UserId,
             cancellationToken: cancellationToken);
@@ -438,7 +472,7 @@ public sealed class MemberService : IMemberService
         var key = (capability ?? string.Empty).Trim();
         if (key.Equals(MembershipRules.Micro90Product, StringComparison.OrdinalIgnoreCase)
             && !MembershipRules.AllowsMicro90(member.LegalStatus))
-            return Result<bool>.Fail("member.usager_micro90", "Micro90 est interdit aux usagers. Conversion en sociétaire requise.");
+            return Result<bool>.Fail("member.usager_micro90", "CT90 est interdit aux usagers. Conversion en sociétaire requise.");
         if (key.Equals(MembershipRules.OfficerCapability, StringComparison.OrdinalIgnoreCase)
             && !MembershipRules.AllowsOfficerRole(member.LegalStatus))
             return Result<bool>.Fail("member.usager_officer", "Les fonctions d’officier sont interdites aux usagers.");
@@ -585,6 +619,133 @@ public sealed class MemberService : IMemberService
             return Result<bool>.Fail("auth.forbidden", "Le commissaire a un accès en lecture seule.");
         return Result<bool>.Ok(true);
     }
+
+    private Result<bool> RequireCreator()
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return auth;
+        if (!_currentUser.Roles.Any(r => RoleNames.MemberCreateRoles.Contains(r)))
+            return Result<bool>.Fail("auth.forbidden", "Vous ne pouvez pas créer de membre.");
+        return Result<bool>.Ok(true);
+    }
+
+    private bool IsIdentityEditor() =>
+        _currentUser.Roles.Any(r => RoleNames.KycManageRoles.Contains(r));
+
+    private Result<KycOverrideGrant?> AuthorizeIdentityEdit(Member member, Guid? overrideGrantId)
+    {
+        if (IsIdentityEditor())
+            return Result<KycOverrideGrant?>.Ok(null);
+        if (overrideGrantId is Guid grantId
+            && _overrides.TryConsume(
+                grantId,
+                _currentUser.UserId!.Value,
+                member.Id,
+                "edit-fiche",
+                _clock.UtcNow,
+                out var grant))
+            return Result<KycOverrideGrant?>.Ok(grant);
+        return Result<KycOverrideGrant?>.Fail("member.locked", "Fiche verrouillée — demandez au gérant.");
+    }
+
+    public async Task<Result<KycOverrideAuthResponse>> AuthorizeFicheOverrideAsync(
+        Guid memberId,
+        KycOverrideAuthRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<KycOverrideAuthResponse>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+        if (IsIdentityEditor())
+            return Result<KycOverrideAuthResponse>.Fail("member.override_unnecessary", "Le gérant ou l’administrateur peut modifier sans autorisation.");
+        if (!_currentUser.Roles.Any(r => RoleNames.WriteRoles.Contains(r)))
+            return Result<KycOverrideAuthResponse>.Fail("auth.forbidden", "Consultation uniquement.");
+
+        var action = (request.Action ?? "edit-fiche").Trim().ToLowerInvariant();
+        if (action is not "edit-fiche")
+            return Result<KycOverrideAuthResponse>.Fail("member.override_action", "Action invalide. Utilisez edit-fiche.");
+
+        var member = await LoadAsync(memberId, _currentUser.TenantId!.Value, cancellationToken);
+        if (member is null)
+            return Result<KycOverrideAuthResponse>.Fail("member.not_found", "Membre introuvable.");
+
+        var username = request.Username?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            _hasher.VerifyHashedPassword(new User { Username = username }, DummyHash, request.Password ?? string.Empty);
+            return Result<KycOverrideAuthResponse>.Fail("auth.invalid_credentials", "Identifiant ou mot de passe incorrect.");
+        }
+
+        var manager = await _db.Users
+            .Include(u => u.UserRoles)
+            .ThenInclude(ur => ur.Role)
+            .FirstOrDefaultAsync(
+                u => u.TenantId == _currentUser.TenantId && u.Username.ToLower() == username.ToLower(),
+                cancellationToken);
+        if (manager is null || !manager.IsActive)
+        {
+            _hasher.VerifyHashedPassword(new User { Username = username }, DummyHash, request.Password);
+            return Result<KycOverrideAuthResponse>.Fail("auth.invalid_credentials", "Identifiant ou mot de passe incorrect.");
+        }
+
+        var verify = _hasher.VerifyHashedPassword(manager, manager.PasswordHash, request.Password);
+        var isManagerRole = manager.UserRoles.Any(ur =>
+            ur.Role is not null && RoleNames.KycManageRoles.Contains(ur.Role.Name));
+        if (verify == PasswordVerificationResult.Failed || !isManagerRole)
+            return Result<KycOverrideAuthResponse>.Fail("auth.invalid_credentials", "Identifiant ou mot de passe incorrect.");
+
+        var expires = _clock.UtcNow.AddMinutes(5);
+        var grant = _overrides.Issue(new KycOverrideGrant(
+            Guid.NewGuid(),
+            _currentUser.UserId!.Value,
+            member.Id,
+            "edit-fiche",
+            manager.Id,
+            manager.Username,
+            expires));
+
+        await _audit.LogAsync(
+            "Member.OverrideAuthorized",
+            nameof(Member),
+            member.Id,
+            new
+            {
+                actor = _currentUser.Username,
+                authorizedBy = manager.Username,
+                authorizedByUserId = manager.Id,
+                action = "edit-fiche",
+                memberId = member.Id,
+                memberNo = member.MemberNo
+            },
+            member.TenantId,
+            _currentUser.UserId,
+            cancellationToken: cancellationToken);
+
+        return Result<KycOverrideAuthResponse>.Ok(
+            new KycOverrideAuthResponse(grant.GrantId, member.Id, "edit-fiche", expires));
+    }
+
+    private static object SnapshotIdentity(Member member) => new
+    {
+        member.FirstName,
+        member.LastName,
+        member.Cin,
+        member.Nif,
+        member.Phone,
+        member.AlternatePhone,
+        member.AddressLine,
+        member.City,
+        member.Commune,
+        member.DateOfBirth,
+        member.PlaceOfBirth,
+        member.Occupation,
+        status = member.Status.ToString(),
+        kycStatus = member.KycStatus.ToString(),
+        legalStatus = member.LegalStatus.ToString(),
+        member.IsFounder,
+        founderGroup = member.FounderGroup?.ToString()
+    };
 
     private static Result<Member360Dto>? Validate(MemberWriteRequest request, bool isCreate)
     {
@@ -820,6 +981,7 @@ public sealed class MemberService : IMemberService
                 account.IsBlocked,
                 account.BlockedReason,
                 account.OpenedAtUtc,
+                account.LastPassbookPrintAtUtc,
                 holds));
         }
 
@@ -854,6 +1016,55 @@ public sealed class MemberService : IMemberService
         foreach (var ticket in ticketEntities)
             tickets.Add(await MapTicketAsync(ticket, cancellationToken));
 
+        var memberLoans = await _db.Loans.AsNoTracking()
+            .Include(l => l.Product)
+            .Where(l => l.TenantId == member.TenantId && l.MemberId == member.Id)
+            .OrderByDescending(l => l.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+        var previousIds = memberLoans
+            .Where(l => l.RenewedFromLoanId is not null)
+            .Select(l => l.RenewedFromLoanId!.Value)
+            .Distinct()
+            .ToList();
+        var previousPrincipals = previousIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : await _db.Loans.AsNoTracking()
+                .Where(l => previousIds.Contains(l.Id))
+                .ToDictionaryAsync(l => l.Id, l => l.Principal, cancellationToken);
+        var loanSummaries = memberLoans.Select(l =>
+        {
+            decimal? prev = l.RenewedFromLoanId is { } pid && previousPrincipals.TryGetValue(pid, out var p) ? p : null;
+            return new MemberLoanSummaryDto(
+                l.Id,
+                l.LoanNo,
+                l.Status.ToString(),
+                l.CycleNumber,
+                l.Product?.MaxRenewals,
+                LoanEvergreen.RemainingRenewals(l.CycleNumber, l.Product?.MaxRenewals),
+                LoanEvergreen.Matches(l.CycleNumber, l.Principal, prev),
+                l.Principal,
+                l.CurrencyCode);
+        }).ToList();
+
+        var kycRows = await _db.KycDocuments.AsNoTracking()
+            .Where(d => d.TenantId == member.TenantId && d.MemberId == member.Id)
+            .OrderBy(d => d.Type)
+            .ToListAsync(cancellationToken);
+        var uploaderIds = kycRows.Select(d => d.UploadedBy).Distinct().ToList();
+        var uploaderNames = uploaderIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Users.AsNoTracking()
+                .Where(u => uploaderIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
+        var kycDocuments = kycRows.Select(d => new KycDocumentDto(
+            d.Id,
+            d.Type.ToString(),
+            d.ContentType,
+            Path.GetFileName(d.FilePath.Replace('\\', '/')),
+            d.UploadedAtUtc,
+            d.UploadedBy,
+            uploaderNames.GetValueOrDefault(d.UploadedBy, string.Empty))).ToList();
+
         return new Member360Dto(
             member.Id,
             member.MemberNo,
@@ -867,6 +1078,9 @@ public sealed class MemberService : IMemberService
             member.AddressLine,
             member.City,
             member.Commune,
+            member.DateOfBirth,
+            member.PlaceOfBirth,
+            member.Occupation,
             member.BranchId,
             member.Branch?.Name ?? string.Empty,
             member.Status.ToString(),
@@ -898,7 +1112,9 @@ public sealed class MemberService : IMemberService
             savings,
             transactions,
             tickets,
-            "Crédits: aucun");
+            loanSummaries.Count == 0 ? "Crédits: aucun" : $"Crédits: {loanSummaries.Count}",
+            loanSummaries,
+            kycDocuments);
     }
 
     private static string? NormalizeOptional(string? value) =>

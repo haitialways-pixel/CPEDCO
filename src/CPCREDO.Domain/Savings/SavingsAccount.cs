@@ -19,6 +19,7 @@ public class SavingsAccount
     public DateTime? BlockedAtUtc { get; set; }
     public Guid? BlockedByUserId { get; set; }
     public DateTime OpenedAtUtc { get; set; }
+    public DateTime? LastPassbookPrintAtUtc { get; set; }
 
     public Member? Member { get; set; }
     public SavingsProduct? Product { get; set; }

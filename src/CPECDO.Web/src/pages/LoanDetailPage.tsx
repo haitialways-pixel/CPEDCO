@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -8,6 +8,7 @@ import {
   fetchLoan,
   previewPayoffQuote,
   rejectLoan,
+  renewLoan,
   repayLoan,
   submitLoan,
   type Loan,
@@ -20,6 +21,8 @@ import { formatMoney } from "../money";
 export function LoanDetailPage() {
   const { t } = useTranslation();
   const { id } = useParams();
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
   const { session } = useAuth();
   const roles = session?.roles.map((r) => r.name) ?? [];
   const canSubmit = roles.some((r) => ["Admin", "Gerant", "OfficierCredit"].includes(r));
@@ -50,6 +53,11 @@ export function LoanDetailPage() {
     if (!id) return;
     void load(id).catch((err: unknown) => setError(err instanceof Error ? err.message : t("loans.error")));
   }, [id, t]);
+
+  useEffect(() => {
+    if (params.get("vue") !== "renouvellement" || !loan) return;
+    document.getElementById("renouvellement")?.scrollIntoView({ block: "start" });
+  }, [params, loan]);
 
   async function run(action: () => Promise<Loan>) {
     setBusy(true);
@@ -159,6 +167,12 @@ export function LoanDetailPage() {
               <span>{t("loans.dpd")}</span>
               <strong>{loan.daysPastDue}</strong>
             </article>
+            {loan.isEvergreen ? (
+              <article>
+                <span>{t("loans.evergreen")}</span>
+                <strong>{t("loans.yes")}</strong>
+              </article>
+            ) : null}
           </section>
 
           {loan.requiresSecondApproval && loan.status === "PendingApproval" ? (
@@ -211,6 +225,61 @@ export function LoanDetailPage() {
               </>
             ) : null}
           </div>
+
+          {loan.status === "Active" ? (
+            <section className="card-block" id="renouvellement">
+              <h2>{t("loans.renew")}</h2>
+              <ul className="ul-reset renewal-checklist">
+                <li className={loan.renewal.statusActive ? "is-ok" : "is-bad"}>
+                  {t("loans.renew.status")}
+                </li>
+                <li className={loan.renewal.dpdOk ? "is-ok" : "is-bad"}>
+                  {t("loans.renew.dpd", { dpd: loan.renewal.daysPastDue })}
+                </li>
+                <li className={loan.renewal.cycleOk ? "is-ok" : "is-bad"}>
+                  {t("loans.renew.cycle", {
+                    cycle: loan.renewal.cycleNumber,
+                    max: loan.renewal.maxRenewals ?? t("loans.unlimited")
+                  })}
+                </li>
+                <li className={loan.renewal.noUnpaidPenalty ? "is-ok" : "is-bad"}>
+                  {t("loans.renew.penalty")}
+                </li>
+                <li className={loan.renewal.kycActive ? "is-ok" : "is-bad"}>
+                  {t("loans.renew.kyc")}
+                </li>
+                <li className={loan.renewal.outstandingOk ? "is-ok" : "is-bad"}>
+                  {t("loans.renew.outstanding", {
+                    amount: formatMoney(loan.renewal.outstandingPrincipal, loan.currencyCode),
+                    percent: loan.renewal.outstandingPercent
+                  })}
+                </li>
+              </ul>
+              {canSubmit ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={busy || !loan.renewal.canRenew}
+                  onClick={() =>
+                    void (async () => {
+                      setBusy(true);
+                      setError(null);
+                      try {
+                        const next = await renewLoan(loan.id);
+                        navigate(`/credit/prets/${next.id}`);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : t("loans.error"));
+                      } finally {
+                        setBusy(false);
+                      }
+                    })()
+                  }
+                >
+                  {t("loans.renew")}
+                </button>
+              ) : null}
+            </section>
+          ) : null}
 
           {canDisburse && loan.status === "Active" ? (
             <form
@@ -352,6 +421,7 @@ function printLoanReceipt(receipt: LoanReceipt) {
     <tr><td>Caissier</td><td>${receipt.cashierName}</td></tr>
     <tr><td>Agence</td><td>${receipt.branchName}</td></tr>
   </table>
+  <p style="margin-top:1.4rem;font-size:10px;letter-spacing:.02em">CPCREDO — Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti</p>
   </body></html>`;
   const w = window.open("", "_blank", "width=480,height=640");
   if (!w) return;

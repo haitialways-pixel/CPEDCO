@@ -16,7 +16,16 @@ public interface IMemberService
 
     Task<Result<Member360Dto>> CreateAsync(MemberWriteRequest request, CancellationToken cancellationToken = default);
 
-    Task<Result<Member360Dto>> UpdateAsync(Guid id, MemberWriteRequest request, CancellationToken cancellationToken = default);
+    Task<Result<Member360Dto>> UpdateAsync(
+        Guid id,
+        MemberWriteRequest request,
+        Guid? overrideGrantId = null,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<KycOverrideAuthResponse>> AuthorizeFicheOverrideAsync(
+        Guid memberId,
+        KycOverrideAuthRequest request,
+        CancellationToken cancellationToken = default);
 
     Task<Result<Member360Dto>> ConvertToSocietaireAsync(
         Guid id,

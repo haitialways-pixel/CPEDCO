@@ -14,6 +14,9 @@ public sealed class MemberWriteRequest
     public string AddressLine { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;
     public string? Commune { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
+    public string? PlaceOfBirth { get; set; }
+    public string? Occupation { get; set; }
     public Guid? BranchId { get; set; }
     public MemberStatus? Status { get; set; }
     public KycStatus? KycStatus { get; set; }
@@ -124,6 +127,9 @@ public sealed record Member360Dto(
     string AddressLine,
     string City,
     string? Commune,
+    DateOnly? DateOfBirth,
+    string? PlaceOfBirth,
+    string? Occupation,
     Guid BranchId,
     string BranchName,
     string Status,
@@ -145,7 +151,20 @@ public sealed record Member360Dto(
     IReadOnlyList<SavingsAccountDto> SavingsAccounts,
     IReadOnlyList<MemberTransactionDto> RecentTransactions,
     IReadOnlyList<MemberTicketDto> Tickets,
-    string LoansPlaceholder);
+    string LoansPlaceholder,
+    IReadOnlyList<MemberLoanSummaryDto> Loans,
+    IReadOnlyList<KycDocumentDto> KycDocuments);
+
+public sealed record MemberLoanSummaryDto(
+    Guid Id,
+    string LoanNo,
+    string Status,
+    int CycleNumber,
+    int? MaxRenewals,
+    int? RemainingRenewals,
+    bool IsEvergreen,
+    decimal Principal,
+    string CurrencyCode);
 
 public sealed record MemberListDto(
     IReadOnlyList<MemberSummaryDto> Items,

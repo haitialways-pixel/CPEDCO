@@ -5,15 +5,27 @@ using CPCREDO.Infrastructure;
 using CPCREDO.Infrastructure.Persistence;
 using CPCREDO.Infrastructure.Seed;
 using CPCREDO.WebApi.Filters;
+using CPCREDO.WebApi.Json;
 using CPCREDO.WebApi.Swagger;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 6_291_456;
+});
+builder.Services.Configure<CPCREDO.Application.Members.KycStorageOptions>(options =>
+{
+    options.RootPath = Path.Combine(builder.Environment.ContentRootPath, "data", "kyc");
+});
 builder.Services.AddControllers(options =>
     {
         options.Filters.Add<IdempotencyActionFilter>();
@@ -21,6 +33,9 @@ builder.Services.AddControllers(options =>
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(new DecimalJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new NullableDecimalJsonConverter());
+        options.JsonSerializerOptions.NumberHandling = JsonNumberHandling.AllowReadingFromString;
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
 
@@ -120,8 +135,20 @@ using (var scope = app.Services.CreateScope())
     {
         try
         {
-            await db.Database.MigrateAsync();
+            var creator = db.GetService<IRelationalDatabaseCreator>();
+            if (!await creator.ExistsAsync())
+            {
+                logger.LogError("La base cpcredo n'existe pas. Relancez INSTALLER-SERVEUR.bat.");
+                throw new InvalidOperationException(
+                    "La base de données cpcredo n'existe pas. Exécutez INSTALLER-SERVEUR.bat en tant qu'administrateur.");
+            }
+
+            await db.GetService<IMigrator>().MigrateAsync();
             break;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.IndexOf("n'existe pas", StringComparison.Ordinal) >= 0)
+        {
+            throw;
         }
         catch (Exception ex) when (retries-- > 0)
         {
@@ -153,6 +180,25 @@ else
 }
 
 app.UseCors("StaffUi");
+var spaStatic = new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var name = ctx.File.Name;
+        if (name.Equals("index.html", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+            ctx.Context.Response.Headers.Pragma = "no-cache";
+            ctx.Context.Response.Headers.Expires = "0";
+        }
+        else if (ctx.Context.Request.Path.StartsWithSegments("/assets"))
+        {
+            ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        }
+    }
+};
+app.UseDefaultFiles();
+app.UseStaticFiles(spaStatic);
 app.UseAuthentication();
 app.Use(async (context, next) =>
 {
@@ -195,5 +241,6 @@ app.MapHealthChecks("/health", new HealthCheckOptions
         });
     }
 });
+app.MapFallbackToFile("index.html", spaStatic);
 
 app.Run();

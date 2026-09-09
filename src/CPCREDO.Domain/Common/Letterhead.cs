@@ -18,4 +18,6 @@ public static class Letterhead
     public const string Country = "Haïti";
     public const string DefaultBranchName = "Siège Pétion-Ville";
     public const string DefaultBranchCode = "SIEGE";
+    public const string Footer =
+        "CPCREDO — Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti";
 }

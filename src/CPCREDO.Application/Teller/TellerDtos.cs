@@ -5,8 +5,42 @@ namespace CPCREDO.Application.Teller;
 public sealed class OpenTillRequest
 {
     public string CurrencyCode { get; set; } = Currencies.Htg;
-    public decimal OpeningFloat { get; set; }
+    public decimal? OpeningFloat { get; set; }
 }
+
+public sealed class CreateInternalCashRequest
+{
+    public string Direction { get; set; } = string.Empty;
+    public decimal? Amount { get; set; }
+    public string CurrencyCode { get; set; } = Currencies.Htg;
+    public Guid? SourceTillSessionId { get; set; }
+    public Guid? DestinationTillSessionId { get; set; }
+    public string? Note { get; set; }
+}
+
+public sealed record OpenTillPeerDto(
+    Guid Id,
+    Guid UserId,
+    string CashierName,
+    string CurrencyCode,
+    decimal ExpectedCash);
+
+public sealed record InternalCashMovementDto(
+    Guid Id,
+    string MovementNo,
+    string Direction,
+    string Status,
+    string CurrencyCode,
+    decimal Amount,
+    Guid? SourceTillSessionId,
+    string? SourceCashierName,
+    Guid? DestinationTillSessionId,
+    string? DestinationCashierName,
+    string? Note,
+    DateTime CreatedAtUtc,
+    DateTime? AcceptedAtUtc,
+    Guid? JournalEntryId,
+    bool CanAccept);
 
 public sealed class TillCountLineRequest
 {
@@ -16,6 +50,10 @@ public sealed class TillCountLineRequest
 
 public sealed class CloseTillRequest
 {
+    public decimal? CountedBalance { get; set; }
+
+    public string? Notes { get; set; }
+
     public List<TillCountLineRequest> Denominations { get; set; } = [];
 }
 
@@ -62,7 +100,8 @@ public sealed record TillSessionDto(
     decimal? OverShortAmount,
     Guid? OverShortJournalId,
     DateTime OpenedAtUtc,
-    DateTime? ClosedAtUtc);
+    DateTime? ClosedAtUtc,
+    string? Notes);
 
 public sealed record CashPostResultDto(
     CashReceiptDto Receipt,

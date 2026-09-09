@@ -16,6 +16,7 @@ public class LoanProduct
     public InterestMethod InterestMethod { get; set; } = InterestMethod.FlatOnOriginalPrincipalForTerm;
     public decimal DefaultRatePercent { get; set; } = 20m;
     public int? MaxRenewals { get; set; }
+    public decimal? RenewalMaxOutstandingPercent { get; set; }
     public decimal CompulsorySavingsPercent { get; set; } = 10m;
     public decimal? MinPrincipal { get; set; }
     public decimal? MaxPrincipal { get; set; }
