@@ -435,6 +435,7 @@ $settings = @"
   },
   "Cors": { "Origins": [] },
   "Seed": { "Enabled": false },
+  "Backup": { "Folder": "$(Escape-JsonString (Join-Path $dest "backups"))", "PgDumpPath": "" },
   "KycStorage": { "RootPath": "$(Escape-JsonString $kycRoot)" },
   "Logging": {
     "LogLevel": {

@@ -206,13 +206,19 @@ const NAV: NavGroup[] = [
   {
     id: "admin",
     labelKey: "nav.admin",
-    roles: ["Admin"],
+    roles: ["Admin", "Gerant"],
     children: [
       {
         to: "/staff",
         labelKey: "nav.users",
         roles: ["Admin"],
-        isActive: (pathname) => pathname === "/staff" || pathname.startsWith("/staff/")
+        isActive: (pathname) => pathname === "/staff"
+      },
+      {
+        to: "/staff/sauvegarde",
+        labelKey: "nav.backup",
+        roles: ["Admin", "Gerant"],
+        isActive: (pathname) => pathname === "/staff/sauvegarde"
       }
     ]
   }

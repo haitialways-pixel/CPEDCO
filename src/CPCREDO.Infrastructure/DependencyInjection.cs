@@ -1,5 +1,6 @@
 using System.Text;
 using CPCREDO.Application.Accounting;
+using CPCREDO.Application.Admin;
 using CPCREDO.Application.Common;
 using CPCREDO.Application.Identity;
 using CPCREDO.Application.Members;
@@ -11,6 +12,7 @@ using CPCREDO.Application.Treasury;
 using CPCREDO.Application.Loans;
 using CPCREDO.Domain.Identity;
 using CPCREDO.Infrastructure.Accounting;
+using CPCREDO.Infrastructure.Admin;
 using CPCREDO.Infrastructure.Members;
 using CPCREDO.Infrastructure.Teller;
 using CPCREDO.Infrastructure.Treasury;
@@ -76,6 +78,7 @@ public static class DependencyInjection
         services.AddAuthorization(options =>
         {
             options.AddPolicy("AdminOnly", policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy("CanBackup", policy => policy.RequireRole(RoleNames.BackupRoles.ToArray()));
             options.AddPolicy("CanWrite", policy => policy.RequireRole(RoleNames.WriteRoles.ToArray()));
             options.AddPolicy("CanReverse", policy => policy.RequireRole(RoleNames.ReverseRoles.ToArray()));
             options.AddPolicy("CanKycUpload", policy => policy.RequireRole(RoleNames.KycUploadRoles.ToArray()));
@@ -89,6 +92,9 @@ public static class DependencyInjection
         services.AddScoped<ITokenService, JwtTokenService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IStaffService, StaffService>();
+        services.Configure<BackupOptions>(configuration.GetSection(BackupOptions.SectionName));
+        services.AddSingleton<IBackupProcess, ProcessBackupRunner>();
+        services.AddScoped<IBackupService, BackupService>();
         services.AddScoped<IInstitutionPublicService, InstitutionPublicService>();
         services.AddScoped<IJournalService, JournalService>();
         services.AddScoped<IReportService, ReportService>();

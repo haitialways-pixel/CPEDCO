@@ -10,6 +10,7 @@ import { SavingsStatementPage } from "./pages/SavingsStatementPage";
 import { TellerPage } from "./pages/TellerPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { StaffPage } from "./pages/StaffPage";
+import { BackupPage } from "./pages/BackupPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { TreasuryBanksPage } from "./pages/TreasuryBanksPage";
 import { TreasuryMovementsPage } from "./pages/TreasuryMovementsPage";
@@ -135,6 +136,14 @@ export function App() {
         element={
           <Protected>
             <StaffPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/staff/sauvegarde"
+        element={
+          <Protected>
+            <BackupPage />
           </Protected>
         }
       />

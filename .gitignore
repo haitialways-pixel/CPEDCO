@@ -44,3 +44,5 @@ CPCREDO-USB/
 artifacts/
 **/admin-initial-password.txt
 **/install.lock
+**/backup-settings.json
+**/backups/

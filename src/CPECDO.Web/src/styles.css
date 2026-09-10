@@ -201,6 +201,14 @@ input {
   font-size: 0.92rem;
 }
 
+.backup-info {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.75rem;
+  background: #e7efe9;
+  color: var(--green-deep);
+  font-size: 0.92rem;
+}
+
 .login-form label {
   display: grid;
   gap: 0.35rem;

@@ -43,4 +43,9 @@ public static class RoleNames
     [
         Admin, Gerant, OfficierCredit, ServiceClient
     ];
+
+    public static readonly IReadOnlyList<string> BackupRoles =
+    [
+        Admin, Gerant
+    ];
 }
