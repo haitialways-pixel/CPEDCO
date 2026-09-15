@@ -66,6 +66,14 @@ public sealed class StaffController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpPost("{id:guid}/mfa/reset")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<ActionResult<StaffUserDto>> ResetMfa(Guid id, [FromBody] ResetMfaRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _staff.ResetMfaAsync(id, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
     private ActionResult<T> ToActionResult<T>(Result<T> result)
     {
         if (result.IsSuccess)

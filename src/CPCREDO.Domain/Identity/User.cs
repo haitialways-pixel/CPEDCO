@@ -13,6 +13,9 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public bool MustChangePassword { get; set; }
+    public bool MfaEnabled { get; set; }
+    public string? TotpSecretProtected { get; set; }
+    public long? LastTotpTimestep { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? LastLoginAtUtc { get; set; }
 

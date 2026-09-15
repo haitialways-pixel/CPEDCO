@@ -8,4 +8,5 @@ public sealed class JwtOptions
     public string Audience { get; set; } = "CPCREDO.Staff";
     public string Secret { get; set; } = string.Empty;
     public int ExpiryMinutes { get; set; } = 480;
+    public int IdleMinutes { get; set; } = 12;
 }

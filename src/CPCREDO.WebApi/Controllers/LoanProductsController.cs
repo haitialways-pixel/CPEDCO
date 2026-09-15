@@ -31,7 +31,7 @@ public sealed class LoanProductsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageProducts")]
     public async Task<ActionResult<LoanProductDto>> Create(
         [FromBody] SaveLoanProductRequest request,
         CancellationToken cancellationToken)
@@ -43,7 +43,7 @@ public sealed class LoanProductsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageProducts")]
     public async Task<ActionResult<LoanProductDto>> Update(
         Guid id,
         [FromBody] SaveLoanProductRequest request,
@@ -54,7 +54,7 @@ public sealed class LoanProductsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/deactivate")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageProducts")]
     public async Task<ActionResult<LoanProductDto>> Deactivate(Guid id, CancellationToken cancellationToken)
     {
         var result = await _products.DeactivateAsync(id, cancellationToken);

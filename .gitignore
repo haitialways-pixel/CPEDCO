@@ -38,6 +38,7 @@ postgres-data/
 
 ## KYC uploads (files on disk, never Postgres)
 src/CPCREDO.WebApi/data/
+**/dp-keys/
 
 ## USB install output (contains hashed lock + binaries, never the install password)
 CPCREDO-USB/

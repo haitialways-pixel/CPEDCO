@@ -165,6 +165,9 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.FullName).HasMaxLength(128).IsRequired();
             b.Property(x => x.PasswordHash).HasMaxLength(512).IsRequired();
             b.Property(x => x.MustChangePassword).IsRequired();
+            b.Property(x => x.MfaEnabled).IsRequired();
+            b.Property(x => x.TotpSecretProtected).HasMaxLength(512);
+            b.Property(x => x.LastTotpTimestep);
             b.HasIndex(x => new { x.TenantId, x.Username }).IsUnique();
             b.HasOne(x => x.Tenant).WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);

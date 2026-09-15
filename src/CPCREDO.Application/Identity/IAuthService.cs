@@ -12,4 +12,8 @@ public interface IAuthService
         Guid userId,
         ChangePasswordRequest request,
         CancellationToken cancellationToken = default);
+
+    Task LogoutAsync(Guid? sessionId, Guid? userId, CancellationToken cancellationToken = default);
+
+    Task<Result<LoginResponse>> VerifyMfaAsync(MfaVerifyRequest request, string? ipAddress, CancellationToken cancellationToken = default);
 }

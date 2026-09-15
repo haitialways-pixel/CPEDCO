@@ -19,6 +19,17 @@ export type BackupRunResult = {
   folder: string;
 };
 
+export type BackupStatus = {
+  folder: string;
+  pgDumpPath: string;
+  lastStatus: string;
+  lastDumpFileName: string | null;
+  lastError: string | null;
+  lastRunAtUtc: string | null;
+  nextRunAtLocal: string;
+  files: BackupFile[];
+};
+
 function headers(): HeadersInit {
   const token = getToken();
   return {
@@ -55,11 +66,17 @@ export async function runBackup(): Promise<BackupRunResult> {
   return (await response.json()) as BackupRunResult;
 }
 
-export async function restoreBackup(dumpFileName: string, password: string): Promise<void> {
+export async function fetchBackupStatus(): Promise<BackupStatus> {
+  const response = await apiFetch("/api/v1/admin/backup/status", { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as BackupStatus;
+}
+
+export async function restoreBackup(dumpFileName: string, password: string, confirmation: string): Promise<void> {
   const response = await apiFetch("/api/v1/admin/backup/restore", {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ dumpFileName, password })
+    body: JSON.stringify({ dumpFileName, password, confirmation })
   });
   if (!response.ok) throw new Error(await parseError(response));
 }

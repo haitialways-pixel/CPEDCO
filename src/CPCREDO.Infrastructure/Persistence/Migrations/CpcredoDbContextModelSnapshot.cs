@@ -465,6 +465,19 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("must_change_password");
 
+                    b.Property<bool>("MfaEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("mfa_enabled");
+
+                    b.Property<string>("TotpSecretProtected")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("totp_secret_protected");
+
+                    b.Property<long?>("LastTotpTimestep")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_totp_timestep");
+
                     b.Property<DateTime?>("LastLoginAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_login_at_utc");

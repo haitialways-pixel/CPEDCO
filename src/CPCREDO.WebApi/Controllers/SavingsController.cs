@@ -26,7 +26,7 @@ public sealed class SavingsController : ControllerBase
     }
 
     [HttpPost("accounts")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanCreateMember")]
     [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status201Created)]
     public async Task<ActionResult<SavingsAccountDto>> OpenAccount(
         [FromBody] OpenSavingsAccountRequest request,
@@ -82,6 +82,7 @@ public sealed class SavingsController : ControllerBase
     }
 
     [HttpPost("accounts/{accountId:guid}/livret.pdf")]
+    [Authorize(Policy = "CanLivret")]
     [Produces("application/pdf")]
     public async Task<IActionResult> PrintLivret(
         Guid accountId,
@@ -105,7 +106,7 @@ public sealed class SavingsController : ControllerBase
     }
 
     [HttpPost("accounts/{accountId:guid}/holds")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageSavings")]
     [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SavingsAccountDto>> PlaceHold(
         Guid accountId,
@@ -117,7 +118,7 @@ public sealed class SavingsController : ControllerBase
     }
 
     [HttpPost("accounts/{accountId:guid}/holds/{holdId:guid}/release")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageSavings")]
     [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SavingsAccountDto>> ReleaseHold(
         Guid accountId,
@@ -129,7 +130,7 @@ public sealed class SavingsController : ControllerBase
     }
 
     [HttpPost("accounts/{accountId:guid}/block")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageSavings")]
     [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SavingsAccountDto>> Block(
         Guid accountId,
@@ -141,7 +142,7 @@ public sealed class SavingsController : ControllerBase
     }
 
     [HttpPost("accounts/{accountId:guid}/unblock")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanManageSavings")]
     [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<SavingsAccountDto>> Unblock(
         Guid accountId,

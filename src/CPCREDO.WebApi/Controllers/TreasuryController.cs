@@ -30,7 +30,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("banks")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasury")]
     public async Task<ActionResult<BankAccountDto>> CreateBank(
         [FromBody] SaveBankAccountRequest request,
         CancellationToken cancellationToken)
@@ -42,7 +42,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPut("banks/{id:guid}")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasury")]
     public async Task<ActionResult<BankAccountDto>> UpdateBank(
         Guid id,
         [FromBody] SaveBankAccountRequest request,
@@ -53,7 +53,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("banks/{id:guid}/deactivate")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasury")]
     public async Task<ActionResult<BankAccountDto>> DeactivateBank(Guid id, CancellationToken cancellationToken)
     {
         var result = await _treasury.DeactivateBankAsync(id, cancellationToken);
@@ -82,7 +82,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("transfers")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasuryDraft")]
     public async Task<ActionResult<TreasuryTransferDto>> Create(
         [FromBody] CreateTreasuryTransferRequest request,
         CancellationToken cancellationToken)
@@ -94,7 +94,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("transfers/{id:guid}/approve")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasury")]
     public async Task<ActionResult<TreasuryTransferDto>> Approve(Guid id, CancellationToken cancellationToken)
     {
         var result = await _treasury.ApproveAsync(id, cancellationToken);
@@ -102,7 +102,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("transfers/{id:guid}/slip")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasury")]
     [RequestSizeLimit(6 * 1024 * 1024)]
     public async Task<ActionResult<TreasuryTransferDto>> AttachSlip(Guid id, CancellationToken cancellationToken)
     {
@@ -131,7 +131,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("transfers/{id:guid}/execute")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasury")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<TreasuryTransferDto>> Execute(
         Guid id,
@@ -153,7 +153,7 @@ public sealed class TreasuryController : ControllerBase
     }
 
     [HttpPost("transfers/{id:guid}/cancel")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTreasuryDraft")]
     public async Task<ActionResult<TreasuryTransferDto>> Cancel(
         Guid id,
         [FromBody] CancelTreasuryTransferRequest? request,

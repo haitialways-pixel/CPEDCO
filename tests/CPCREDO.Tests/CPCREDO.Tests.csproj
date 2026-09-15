@@ -4,6 +4,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
@@ -16,5 +17,6 @@
     <ProjectReference Include="..\..\src\CPCREDO.Application\CPCREDO.Application.csproj" />
     <ProjectReference Include="..\..\src\CPCREDO.Domain\CPCREDO.Domain.csproj" />
     <ProjectReference Include="..\..\src\CPCREDO.Infrastructure\CPCREDO.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\CPCREDO.WebApi\CPCREDO.WebApi.csproj" />
   </ItemGroup>
 </Project>

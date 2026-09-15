@@ -53,7 +53,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanCreateMember")]
     [ProducesResponseType(typeof(Member360Dto), StatusCodes.Status201Created)]
     public async Task<ActionResult<Member360Dto>> Create([FromBody] MemberWriteRequest request, CancellationToken cancellationToken)
     {
@@ -64,7 +64,9 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = "CanWrite")]
+    [HttpPatch("{id:guid}")]
+    [HttpPost("{id:guid}")]
+    [Authorize(Policy = "CanEditMember")]
     [ProducesResponseType(typeof(Member360Dto), StatusCodes.Status200OK)]
     public async Task<ActionResult<Member360Dto>> Update(
         Guid id,
@@ -76,7 +78,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/override-auth")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanEditMember")]
     [ProducesResponseType(typeof(KycOverrideAuthResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<KycOverrideAuthResponse>> FicheOverrideAuth(
         Guid id,
@@ -88,7 +90,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/convert-to-societaire")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanEditMember")]
     [RequiresIdempotencyKey]
     [ProducesResponseType(typeof(Member360Dto), StatusCodes.Status200OK)]
     public async Task<ActionResult<Member360Dto>> ConvertToSocietaire(Guid id, CancellationToken cancellationToken)
@@ -99,7 +101,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/permanent-shares")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanEditMember")]
     [RequiresIdempotencyKey]
     [ProducesResponseType(typeof(Member360Dto), StatusCodes.Status200OK)]
     public async Task<ActionResult<Member360Dto>> SubscribePermanentShares(
@@ -113,7 +115,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/tickets")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTickets")]
     [ProducesResponseType(typeof(MemberTicketDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<MemberTicketDto>> OpenTicket(
         Guid id,
@@ -125,7 +127,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/tickets/{ticketId:guid}/assign")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTickets")]
     [ProducesResponseType(typeof(MemberTicketDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<MemberTicketDto>> AssignTicket(
         Guid id,
@@ -138,7 +140,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/tickets/{ticketId:guid}/close")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTickets")]
     [ProducesResponseType(typeof(MemberTicketDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<MemberTicketDto>> CloseTicket(
         Guid id,
@@ -208,7 +210,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}/kyc/{type}")]
-    [Authorize(Policy = "CanKycUpload")]
+    [Authorize(Policy = "CanKycManage")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<bool>> DeleteKyc(Guid id, string type, CancellationToken cancellationToken)
     {
@@ -219,7 +221,7 @@ public sealed class MembersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanEditMember")]
     public ActionResult RejectDelete() =>
         StatusCode(StatusCodes.Status405MethodNotAllowed, new
         {

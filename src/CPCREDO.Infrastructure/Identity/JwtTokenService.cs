@@ -20,7 +20,7 @@ public sealed class JwtTokenService : ITokenService
         _clock = clock;
     }
 
-    public string CreateAccessToken(User user, IReadOnlyList<string> roles, out DateTime expiresAtUtc)
+    public string CreateAccessToken(User user, IReadOnlyList<string> roles, Guid sessionId, out DateTime expiresAtUtc)
     {
         var now = _clock.UtcNow;
         expiresAtUtc = now.AddMinutes(_options.ExpiryMinutes);
@@ -28,7 +28,7 @@ public sealed class JwtTokenService : ITokenService
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Jti, sessionId.ToString()),
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.Username),
             new("tenant_id", user.TenantId.ToString()),

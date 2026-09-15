@@ -10,8 +10,19 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${normalized}`;
 }
 
-export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(apiUrl(path), init);
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(apiUrl(path), init);
+  if (response.status === 401) {
+    try {
+      const body = (await response.clone().json()) as { code?: string };
+      if (body.code === "auth.session_expired") {
+        window.dispatchEvent(new Event("cpcredo:session-expired"));
+      }
+    } catch {
+      /* not JSON */
+    }
+  }
+  return response;
 }
 
 export function getToken(): string | null {
@@ -59,6 +70,16 @@ export async function login(username: string, password: string): Promise<LoginRe
   return (await response.json()) as LoginResponse;
 }
 
+export async function verifyMfa(ticket: string, code: string): Promise<LoginResponse> {
+  const response = await apiFetch("/api/auth/mfa/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket, code })
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as LoginResponse;
+}
+
 export async function fetchMe(token: string): Promise<MeResponse> {
   const response = await apiFetch("/api/auth/me", {
     headers: { Authorization: `Bearer ${token}` }
@@ -74,4 +95,16 @@ export async function changePassword(token: string, currentPassword: string, new
     body: JSON.stringify({ currentPassword, newPassword })
   });
   if (!response.ok) throw new Error(await parseError(response));
+}
+
+export async function logout(token: string | null): Promise<void> {
+  if (!token) return;
+  try {
+    await apiFetch("/api/auth/logout", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  } catch {
+    /* local logout still proceeds */
+  }
 }

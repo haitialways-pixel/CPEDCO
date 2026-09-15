@@ -29,7 +29,7 @@ public sealed class BackupTests
         var result = await harness.Backup.BackupNowAsync();
 
         Assert.True(result.IsSuccess, result.ErrorMessage);
-        Assert.Matches(@"^cpcredo-\d{8}-\d{6}\.dump$", result.Value!.DumpFileName);
+        Assert.Matches(@"^cpcredo-\d{8}-\d{4}\.dump$", result.Value!.DumpFileName);
         Assert.Equal("cpcredo-kyc-" + result.Value.DumpFileName["cpcredo-".Length..].Replace(".dump", ".zip"), result.Value.KycZipFileName);
         Assert.True(File.Exists(Path.Combine(harness.BackupFolder, result.Value.DumpFileName)));
         Assert.True(File.Exists(Path.Combine(harness.BackupFolder, result.Value.KycZipFileName!)));
@@ -40,6 +40,11 @@ public sealed class BackupTests
         Assert.DoesNotContain("--clean", dumpArgs);
         Assert.Contains("-Fc", dumpArgs);
         Assert.True(await harness.Db.AuditLogs.AnyAsync(a => a.Action == "Backup.Created"));
+        var status = await harness.Backup.GetStatusAsync();
+        Assert.True(status.IsSuccess, status.ErrorMessage);
+        Assert.Equal("OK", status.Value!.LastStatus);
+        Assert.Equal(result.Value.DumpFileName, status.Value.LastDumpFileName);
+        Assert.True(status.Value.NextRunAtLocal > DateTime.Now.AddMinutes(-1));
     }
 
     [Fact]
@@ -54,7 +59,8 @@ public sealed class BackupTests
         var restore = await harness.Backup.RestoreAsync(new RestoreBackupRequest
         {
             DumpFileName = backup.Value!.DumpFileName,
-            Password = "AdminPass!12"
+            Password = "AdminPass!12",
+            Confirmation = "SAUVEGARDE"
         });
         Assert.False(restore.IsSuccess);
         Assert.Equal("auth.forbidden", restore.ErrorCode);
@@ -67,10 +73,20 @@ public sealed class BackupTests
         var backup = await harness.Backup.BackupNowAsync();
         Assert.True(backup.IsSuccess, backup.ErrorMessage);
 
-        var denied = await harness.Backup.RestoreAsync(new RestoreBackupRequest
+        var noConfirm = await harness.Backup.RestoreAsync(new RestoreBackupRequest
         {
             DumpFileName = backup.Value!.DumpFileName,
-            Password = "wrong"
+            Password = "AdminPass!12",
+            Confirmation = "oui"
+        });
+        Assert.False(noConfirm.IsSuccess);
+        Assert.Equal("backup.confirmation_required", noConfirm.ErrorCode);
+
+        var denied = await harness.Backup.RestoreAsync(new RestoreBackupRequest
+        {
+            DumpFileName = backup.Value.DumpFileName,
+            Password = "wrong",
+            Confirmation = "SAUVEGARDE"
         });
         Assert.False(denied.IsSuccess);
         Assert.Equal("auth.invalid_credentials", denied.ErrorCode);
@@ -79,7 +95,8 @@ public sealed class BackupTests
         var ok = await harness.Backup.RestoreAsync(new RestoreBackupRequest
         {
             DumpFileName = backup.Value.DumpFileName,
-            Password = "AdminPass!12"
+            Password = "AdminPass!12",
+            Confirmation = "SAUVEGARDE"
         });
         Assert.True(ok.IsSuccess, ok.ErrorMessage);
         var restoreArgs = harness.Process.Calls.Last(c => c.Exe.Contains("pg_restore", StringComparison.OrdinalIgnoreCase)).Args;

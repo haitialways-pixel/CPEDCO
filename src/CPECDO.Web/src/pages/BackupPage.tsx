@@ -3,33 +3,45 @@ import { Navigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import {
-  fetchBackupFiles,
-  fetchBackupSettings,
+  fetchBackupStatus,
   restoreBackup,
   runBackup,
   saveBackupSettings,
   type BackupFile,
-  type BackupSettings
+  type BackupSettings,
+  type BackupStatus
 } from "../api/backup";
 
 export function BackupPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { session } = useAuth();
   const [settings, setSettings] = useState<BackupSettings>({ folder: "", pgDumpPath: "" });
   const [files, setFiles] = useState<BackupFile[]>([]);
+  const [lastStatus, setLastStatus] = useState("");
+  const [lastDump, setLastDump] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [nextRun, setNextRun] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [restoreName, setRestoreName] = useState<string | null>(null);
   const [restorePassword, setRestorePassword] = useState("");
+  const [restoreConfirm, setRestoreConfirm] = useState("");
 
   const isAdmin = session?.roles.some((r) => r.name === "Admin") ?? false;
   const canBackup = session?.roles.some((r) => r.name === "Admin" || r.name === "Gerant") ?? false;
 
+  function applyStatus(status: BackupStatus) {
+    setSettings({ folder: status.folder, pgDumpPath: status.pgDumpPath });
+    setFiles(status.files);
+    setLastStatus(status.lastStatus);
+    setLastDump(status.lastDumpFileName);
+    setLastError(status.lastError);
+    setNextRun(status.nextRunAtLocal);
+  }
+
   async function reload() {
-    const [nextSettings, nextFiles] = await Promise.all([fetchBackupSettings(), fetchBackupFiles()]);
-    setSettings(nextSettings);
-    setFiles(nextFiles);
+    applyStatus(await fetchBackupStatus());
   }
 
   useEffect(() => {
@@ -66,6 +78,7 @@ export function BackupPage() {
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("backup.runError"));
+      await reload().catch(() => undefined);
     } finally {
       setBusy(false);
     }
@@ -78,9 +91,10 @@ export function BackupPage() {
     setInfo(null);
     setBusy(true);
     try {
-      await restoreBackup(restoreName, restorePassword);
+      await restoreBackup(restoreName, restorePassword, restoreConfirm);
       setRestoreName(null);
       setRestorePassword("");
+      setRestoreConfirm("");
       setInfo(t("backup.restored"));
       await reload();
     } catch (err) {
@@ -89,6 +103,13 @@ export function BackupPage() {
       setBusy(false);
     }
   }
+
+  const nextLabel = nextRun
+    ? new Date(nextRun).toLocaleString(i18n.language === "en" ? "en" : "fr-HT", {
+        dateStyle: "short",
+        timeStyle: "short"
+      })
+    : "—";
 
   return (
     <main className="dashboard">
@@ -99,6 +120,21 @@ export function BackupPage() {
         </p>
       ) : null}
       {info ? <p className="backup-info">{info}</p> : null}
+
+      <section className="facts">
+        <article>
+          <span>{t("backup.lastResult")}</span>
+          <strong>
+            {lastStatus === "OK" || lastStatus === "FAIL" ? lastStatus : "—"}
+            {lastDump ? ` · ${lastDump}` : ""}
+          </strong>
+          {lastStatus === "FAIL" && lastError ? <span>{lastError}</span> : null}
+        </article>
+        <article>
+          <span>{t("backup.nextRun")}</span>
+          <strong>{nextLabel}</strong>
+        </article>
+      </section>
 
       <section className="coming-soon">
         <h2>{t("backup.settings")}</h2>
@@ -154,6 +190,7 @@ export function BackupPage() {
                   onClick={() => {
                     setRestoreName(file.dumpFileName);
                     setRestorePassword("");
+                    setRestoreConfirm("");
                   }}
                 >
                   {t("backup.restore")}
@@ -178,6 +215,16 @@ export function BackupPage() {
                 onChange={(event) => setRestorePassword(event.target.value)}
                 required
                 minLength={1}
+              />
+            </label>
+            <label>
+              {t("backup.confirmation")}
+              <input
+                value={restoreConfirm}
+                onChange={(event) => setRestoreConfirm(event.target.value)}
+                placeholder="SAUVEGARDE"
+                required
+                autoComplete="off"
               />
             </label>
             <button type="submit" disabled={busy}>

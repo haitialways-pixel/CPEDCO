@@ -19,7 +19,7 @@ public sealed class JournalsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanJournalPost")]
     [RequiresIdempotencyKey]
     [ProducesResponseType(typeof(JournalDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

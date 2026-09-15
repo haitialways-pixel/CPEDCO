@@ -33,6 +33,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("preview")]
+    [Authorize(Policy = "CanWrite")]
     public async Task<ActionResult<LoanScheduleDto>> Preview(
         [FromBody] PreviewLoanRequest request,
         CancellationToken cancellationToken)
@@ -42,6 +43,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("payoff-quote")]
+    [Authorize(Policy = "CanWrite")]
     public async Task<ActionResult<PayoffQuoteDto>> PayoffQuote(
         [FromBody] PreviewLoanRequest request,
         [FromQuery] int daysElapsed,
@@ -52,7 +54,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanLoanDraft")]
     public async Task<ActionResult<LoanDto>> Create(
         [FromBody] CreateLoanRequest request,
         CancellationToken cancellationToken)
@@ -64,7 +66,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("{id:guid}/submit")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanLoanDraft")]
     public async Task<ActionResult<LoanDto>> Submit(Guid id, CancellationToken cancellationToken)
     {
         var result = await _loans.SubmitAsync(id, cancellationToken);
@@ -72,7 +74,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("{id:guid}/approve")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanLoanApprove")]
     public async Task<ActionResult<LoanDto>> Approve(Guid id, CancellationToken cancellationToken)
     {
         var result = await _loans.ApproveAsync(id, cancellationToken);
@@ -80,7 +82,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reject")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanLoanApprove")]
     public async Task<ActionResult<LoanDto>> Reject(
         Guid id,
         [FromBody] RejectLoanRequest? request,
@@ -91,7 +93,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("{id:guid}/disburse")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanDisburse")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<LoanDto>> Disburse(
         Guid id,
@@ -104,7 +106,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("{id:guid}/renewals")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanLoanDraft")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<LoanDto>> Renew(Guid id, CancellationToken cancellationToken)
     {
@@ -116,7 +118,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("{id:guid}/repayments")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanCollect")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<RepaymentResultDto>> Repay(
         Guid id,
@@ -129,7 +131,7 @@ public sealed class LoansController : ControllerBase
     }
 
     [HttpPost("run-accrual")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanLoanApprove")]
     public async Task<ActionResult<AccrualResultDto>> RunAccrual(CancellationToken cancellationToken)
     {
         var result = await _loans.RunAccrualAsync(cancellationToken);

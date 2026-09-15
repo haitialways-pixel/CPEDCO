@@ -139,6 +139,8 @@ internal sealed class StaffHarness : IDisposable
     public StaffService Staff { get; }
     public AuthService Auth { get; }
     public TestCurrentUser User { get; }
+    public MemoryStaffSessionStore Sessions { get; }
+    public FixedClock Clock { get; }
 
     public StaffHarness()
     {
@@ -189,17 +191,27 @@ internal sealed class StaffHarness : IDisposable
         Db.SaveChanges();
 
         User = new TestCurrentUser();
-        var clock = new FixedClock();
-        var audit = new AuditLogger(Db, clock, User);
-        Staff = new StaffService(Db, User, clock, audit);
+        Clock = new FixedClock();
+        Sessions = new MemoryStaffSessionStore();
+        var audit = new AuditLogger(Db, Clock, User);
+        Staff = new StaffService(Db, User, Clock, audit);
         var jwt = Options.Create(new JwtOptions
         {
             Issuer = "CPCREDO",
             Audience = "CPCREDO.Staff",
             Secret = "unit-test-secret-key-32-chars-min!",
-            ExpiryMinutes = 60
+            ExpiryMinutes = 60,
+            IdleMinutes = 12
         });
-        Auth = new AuthService(Db, new JwtTokenService(jwt, clock), audit, clock, new InstitutionPublicService(Db));
+        Auth = new AuthService(
+            Db,
+            new JwtTokenService(jwt, Clock),
+            audit,
+            Clock,
+            new InstitutionPublicService(Db),
+            Sessions,
+            new MemoryMfaChallengeStore(),
+            new TotpProtector(Microsoft.AspNetCore.DataProtection.DataProtectionProvider.Create("CPCREDO-tests")));
     }
 
     public void Dispose() => Db.Dispose();

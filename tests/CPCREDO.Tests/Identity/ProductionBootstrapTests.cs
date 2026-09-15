@@ -35,9 +35,11 @@ public sealed class ProductionBootstrapTests
 
             var db = provider.GetRequiredService<CpcredoDbContext>();
             Assert.Equal(0, await db.Members.CountAsync());
+            Assert.Equal(0, await db.TillSessions.CountAsync());
             var admin = Assert.Single(db.Users);
             Assert.Equal("admin", admin.Username);
             Assert.True(admin.MustChangePassword);
+            Assert.False(await db.Users.AnyAsync(u => u.Username == "gerant" || u.Username == "caissier"));
             Assert.False(await db.Members.AnyAsync(m => m.IsFounder));
             var once = Path.Combine(root, "data", "admin-initial-password.txt");
             Assert.True(File.Exists(once));
@@ -55,6 +57,43 @@ public sealed class ProductionBootstrapTests
             Assert.DoesNotContain("1", password);
             Assert.DoesNotContain("I", password);
             Assert.DoesNotContain("L", password);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Production_environment_ignores_seed_enabled_and_skips_demo_data()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "cpcredo-boot-prod-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Seed:Enabled"] = "true",
+                    ["Seed:AdminPassword"] = "Admin@Cpcredo2026"
+                })
+                .Build();
+            var services = new ServiceCollection();
+            services.AddSingleton<IConfiguration>(config);
+            services.AddSingleton<IHostEnvironment>(new TestHost { ContentRootPath = root, EnvironmentName = Environments.Production });
+            services.AddSingleton<ILogger<DataSeeder>>(NullLogger<DataSeeder>.Instance);
+            services.AddDbContext<CpcredoDbContext>(o =>
+                o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+            var provider = services.BuildServiceProvider();
+
+            await DataSeeder.SeedAsync(provider);
+
+            var db = provider.GetRequiredService<CpcredoDbContext>();
+            Assert.Equal(0, await db.Members.CountAsync());
+            Assert.Equal(0, await db.TillSessions.CountAsync());
+            Assert.Equal("admin", Assert.Single(db.Users).Username);
+            Assert.False(await db.Users.AnyAsync(u => u.Username == "gerant" || u.Username == "caissier"));
+            Assert.False(await db.Members.AnyAsync(m => m.IsFounder));
         }
         finally
         {

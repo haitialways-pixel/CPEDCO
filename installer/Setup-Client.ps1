@@ -67,11 +67,12 @@ $serverIp = $serverIp.Trim()
 if ($serverIp -match "^https?://") { $serverIp = $serverIp -replace "^https?://", "" }
 $serverIp = $serverIp.TrimEnd("/")
 if ($serverIp -match ":5080$") { $serverIp = $serverIp -replace ":5080$", "" }
+if ($serverIp -match ":5443$") { $serverIp = $serverIp -replace ":5443$", "" }
 if ([string]::IsNullOrWhiteSpace($serverIp)) {
     Show-ErrorDialog "Adresse IP obligatoire." "Relancez INSTALLER-CLIENT.bat et saisissez l'IP du serveur (sans http, sans port)."
     exit 1
 }
-$url = "http://${serverIp}:5080"
+$url = "https://${serverIp}:5443"
 
 function New-UrlShortcut {
     param([string]$Path, [string]$TargetUrl)

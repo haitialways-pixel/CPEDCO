@@ -92,6 +92,9 @@ Copy-Item -Path (Join-Path $installerDir "INSTALLER-CLIENT.bat") -Destination $O
 Copy-Item -Path (Join-Path $installerDir "Setup-Serveur.ps1") -Destination $OutDir -Force
 Copy-Item -Path (Join-Path $installerDir "Setup-Client.ps1") -Destination $OutDir -Force
 Copy-Item -Path (Join-Path $installerDir "README.txt") -Destination $OutDir -Force
+$backupScript = Join-Path $repoRoot "deploy\windows\backup.ps1"
+if (-not (Test-Path $backupScript)) { throw "deploy\windows\backup.ps1 introuvable." }
+Copy-Item -Path $backupScript -Destination (Join-Path $OutDir "backup.ps1") -Force
 Copy-Item -Path (Join-Path $installerDir "Templates\appsettings.Production.json") -Destination $templates -Force
 Set-Content -LiteralPath (Join-Path $templates "install.lock") -Value $hash -Encoding ASCII -NoNewline
 

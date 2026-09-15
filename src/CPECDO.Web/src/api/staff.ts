@@ -44,6 +44,16 @@ export async function disableStaff(token: string, id: string): Promise<StaffUser
   return (await response.json()) as StaffUser;
 }
 
+export async function resetStaffMfa(token: string, id: string, password: string): Promise<StaffUser> {
+  const response = await apiFetch(`/api/v1/staff/${id}/mfa/reset`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({ password })
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as StaffUser;
+}
+
 export async function resetStaffPassword(token: string, id: string, newPassword: string): Promise<StaffUser> {
   const response = await apiFetch(`/api/v1/staff/${id}/reset-password`, {
     method: "POST",

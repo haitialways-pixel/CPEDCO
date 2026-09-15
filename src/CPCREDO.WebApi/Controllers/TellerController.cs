@@ -19,7 +19,7 @@ public sealed class TellerController : ControllerBase
     }
 
     [HttpPost("open")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTill")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<TillSessionDto>> Open([FromBody] OpenTillRequest request, CancellationToken cancellationToken)
     {
@@ -35,7 +35,7 @@ public sealed class TellerController : ControllerBase
     }
 
     [HttpPost("{tillId:guid}/close")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTill")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<TillSessionDto>> Close(
         Guid tillId,
@@ -48,7 +48,7 @@ public sealed class TellerController : ControllerBase
     }
 
     [HttpPost("deposit")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTill")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<CashPostResultDto>> Deposit(
         [FromBody] CashPostRequest request,
@@ -60,7 +60,7 @@ public sealed class TellerController : ControllerBase
     }
 
     [HttpPost("withdraw")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTill")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<CashPostResultDto>> Withdraw(
         [FromBody] CashPostRequest request,
@@ -90,7 +90,7 @@ public sealed class TellerController : ControllerBase
     }
 
     [HttpPost("internal-movements")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTill")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<InternalCashMovementDto>> CreateInternal(
         [FromBody] CreateInternalCashRequest request,
@@ -102,7 +102,7 @@ public sealed class TellerController : ControllerBase
     }
 
     [HttpPost("internal-movements/{id:guid}/accept")]
-    [Authorize(Policy = "CanWrite")]
+    [Authorize(Policy = "CanTill")]
     [RequiresIdempotencyKey]
     public async Task<ActionResult<InternalCashMovementDto>> AcceptInternal(
         Guid id,

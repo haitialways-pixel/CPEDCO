@@ -23,4 +23,9 @@ public interface IStaffService
         Guid id,
         ResetStaffPasswordRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<Result<StaffUserDto>> ResetMfaAsync(
+        Guid id,
+        ResetMfaRequest request,
+        CancellationToken cancellationToken = default);
 }

@@ -201,6 +201,32 @@ input {
   font-size: 0.92rem;
 }
 
+.mfa-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.mfa-setup img {
+  background: #fff;
+  padding: 0.4rem;
+  border-radius: 8px;
+}
+
+.mfa-setup__key {
+  margin: 0;
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  word-break: break-all;
+}
+
+.mfa-setup__key code {
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+}
+
 .backup-info {
   margin: 0 0 1rem;
   padding: 0.6rem 0.75rem;

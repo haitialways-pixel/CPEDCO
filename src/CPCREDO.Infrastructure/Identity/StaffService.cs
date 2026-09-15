@@ -171,6 +171,31 @@ public sealed class StaffService : IStaffService
         return Result<StaffUserDto>.Ok(Map(user));
     }
 
+    public async Task<Result<StaffUserDto>> ResetMfaAsync(Guid id, ResetMfaRequest request, CancellationToken cancellationToken = default)
+    {
+        var auth = RequireAdmin();
+        if (!auth.IsSuccess)
+            return Result<StaffUserDto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+
+        var admin = await _db.Users.FirstOrDefaultAsync(u => u.Id == _currentUser.UserId, cancellationToken);
+        if (admin is null || _hasher.VerifyHashedPassword(admin, admin.PasswordHash, request.Password ?? "") == PasswordVerificationResult.Failed)
+        {
+            await _audit.LogAsync("Mfa.ResetDenied", nameof(User), id, new { reason = "password" }, _currentUser.TenantId, _currentUser.UserId, _currentUser.IpAddress, cancellationToken);
+            return Result<StaffUserDto>.Fail("auth.invalid_credentials", "Mot de passe administrateur incorrect.");
+        }
+
+        var user = await LoadAsync(id, cancellationToken);
+        if (user is null)
+            return Result<StaffUserDto>.Fail("staff.not_found", "Personnel introuvable.");
+
+        user.MfaEnabled = false;
+        user.TotpSecretProtected = null;
+        user.LastTotpTimestep = null;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync("Mfa.Reset", nameof(User), user.Id, new { target = user.Username }, user.TenantId, _currentUser.UserId, _currentUser.IpAddress, cancellationToken);
+        return Result<StaffUserDto>.Ok(Map(user));
+    }
+
     private async Task<User?> LoadAsync(Guid id, CancellationToken cancellationToken) =>
         await _db.Users
             .Include(u => u.UserRoles)
@@ -202,5 +227,6 @@ public sealed class StaffService : IStaffService
                 ur.Role.DisplayNameFr,
                 ur.Role.DisplayNameHt,
                 ur.Role.DisplayNameEn,
-                ur.Role.IsReadOnly)).ToList());
+                ur.Role.IsReadOnly)).ToList(),
+            user.MfaEnabled);
 }

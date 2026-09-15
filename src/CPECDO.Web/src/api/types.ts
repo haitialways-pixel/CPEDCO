@@ -30,6 +30,7 @@ export type StaffUser = {
   isActive: boolean;
   mustChangePassword: boolean;
   roles: RoleDto[];
+  mfaEnabled?: boolean;
 };
 
 export type UserDto = {
@@ -41,6 +42,12 @@ export type UserDto = {
   mustChangePassword: boolean;
 };
 
+export type MfaSetup = {
+  manualKey: string;
+  otpauthUrl: string;
+  qrPngDataUrl: string;
+};
+
 export type BranchDto = {
   id: string;
   code: string;
@@ -50,13 +57,17 @@ export type BranchDto = {
 };
 
 export type LoginResponse = {
-  accessToken: string;
-  expiresAtUtc: string;
-  expiresAtPortAuPrince: string;
-  user: UserDto;
-  institution: Institution;
-  branch: BranchDto;
-  roles: RoleDto[];
+  accessToken?: string | null;
+  expiresAtUtc?: string | null;
+  expiresAtPortAuPrince?: string | null;
+  user?: UserDto | null;
+  institution?: Institution | null;
+  branch?: BranchDto | null;
+  roles?: RoleDto[] | null;
+  mfaRequired?: boolean;
+  mfaSetupRequired?: boolean;
+  mfaTicket?: string | null;
+  mfaSetup?: MfaSetup | null;
 };
 
 export type MeResponse = {

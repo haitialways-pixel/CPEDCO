@@ -127,11 +127,13 @@ public sealed class BackupService : IBackupService
 
         var pgDump = ResolvePgDump(settings.PgDumpPath);
         if (pgDump is null)
-            return Result<BackupRunResult>.Fail(
-                "backup.pg_dump_missing",
-                "pg_dump introuvable. Indiquez le chemin dans les paramètres (ex. C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe).");
+        {
+            var missing = "pg_dump introuvable. Indiquez le dossier bin de PostgreSQL (ex. C:\\Program Files\\PostgreSQL\\16\\bin) dans le chemin pg_dump.";
+            WriteLastResult(false, null, missing);
+            return Result<BackupRunResult>.Fail("backup.pg_dump_missing", missing);
+        }
 
-        var stamp = _clock.ToPortAuPrince(_clock.UtcNow).ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        var stamp = _clock.ToPortAuPrince(_clock.UtcNow).ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture);
         var dumpName = $"cpcredo-{stamp}.dump";
         var dumpPath = Path.Combine(folder, dumpName);
         var cs = ParseConnection();
@@ -150,7 +152,11 @@ public sealed class BackupService : IBackupService
         var env = new Dictionary<string, string> { ["PGPASSWORD"] = cs.Password ?? "" };
         var (code, err) = await _process.RunAsync(pgDump, args, env, cancellationToken);
         if (code != 0 || !File.Exists(dumpPath))
-            return Result<BackupRunResult>.Fail("backup.dump_failed", string.IsNullOrWhiteSpace(err) ? "pg_dump a échoué." : err);
+        {
+            var fail = string.IsNullOrWhiteSpace(err) ? "pg_dump a échoué." : err;
+            WriteLastResult(false, dumpName, fail);
+            return Result<BackupRunResult>.Fail("backup.dump_failed", fail);
+        }
 
         string? kycName = null;
         var kycRoot = string.IsNullOrWhiteSpace(_kyc.Value.RootPath)
@@ -172,13 +178,40 @@ public sealed class BackupService : IBackupService
             new { dump = dumpName, kyc = kycName, folder },
             cancellationToken: cancellationToken);
 
+        WriteLastResult(true, dumpName, null);
         return Result<BackupRunResult>.Ok(new BackupRunResult(dumpName, kycName, folder));
+    }
+
+    public Task<Result<BackupStatusDto>> GetStatusAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanBackup())
+            return Task.FromResult(Result<BackupStatusDto>.Fail("auth.forbidden", "Accès refusé."));
+
+        var settings = LoadSettings();
+        var last = ReadLastResult();
+        var files = ListAsync(cancellationToken).GetAwaiter().GetResult();
+        var list = files.IsSuccess ? files.Value! : Array.Empty<BackupFileDto>();
+        return Task.FromResult(Result<BackupStatusDto>.Ok(new BackupStatusDto(
+            settings.Folder,
+            settings.PgDumpPath,
+            last.Ok is null ? "" : last.Ok.Value ? "OK" : "FAIL",
+            last.DumpFileName,
+            last.Error,
+            last.AtUtc,
+            NextRunLocal(),
+            list)));
     }
 
     public async Task<Result<RestoreBackupResult>> RestoreAsync(RestoreBackupRequest request, CancellationToken cancellationToken = default)
     {
         if (!_currentUser.Roles.Contains(RoleNames.Admin))
             return Result<RestoreBackupResult>.Fail("auth.forbidden", "Seul l’administrateur peut restaurer.");
+
+        if (!string.Equals((request.Confirmation ?? "").Trim(), "SAUVEGARDE", StringComparison.Ordinal))
+        {
+            await _audit.LogAsync("Backup.RestoreDenied", "Backup", null, new { reason = "confirmation" }, cancellationToken: cancellationToken);
+            return Result<RestoreBackupResult>.Fail("backup.confirmation_required", "Tapez SAUVEGARDE pour confirmer la restauration.");
+        }
 
         var password = request.Password ?? "";
         if (string.IsNullOrWhiteSpace(password))
@@ -270,10 +303,53 @@ public sealed class BackupService : IBackupService
         }
 
         var folder = string.IsNullOrWhiteSpace(_defaults.Value.Folder)
-            ? Path.Combine(_env.ContentRootPath, "backups")
+            ? (OperatingSystem.IsWindows() ? @"C:\CPCREDO\backups" : Path.Combine(_env.ContentRootPath, "backups"))
             : _defaults.Value.Folder;
         return new BackupSettingsDto(folder, _defaults.Value.PgDumpPath ?? "");
     }
+
+    private string LastResultPath() => Path.Combine(_env.ContentRootPath, "data", "backup-last.json");
+
+    private void WriteLastResult(bool ok, string? dumpFileName, string? error)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LastResultPath())!);
+            var payload = new BackupLastFile(ok, dumpFileName, error, DateTime.UtcNow);
+            File.WriteAllText(LastResultPath(), JsonSerializer.Serialize(payload, JsonOptions));
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private BackupLastFile ReadLastResult()
+    {
+        try
+        {
+            if (File.Exists(LastResultPath()))
+                return JsonSerializer.Deserialize<BackupLastFile>(File.ReadAllText(LastResultPath()), JsonOptions)
+                    ?? new BackupLastFile(null, null, null, null);
+        }
+        catch (JsonException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        return new BackupLastFile(null, null, null, null);
+    }
+
+    private static DateTime NextRunLocal()
+    {
+        var now = DateTime.Now;
+        var next = now.Date.AddHours(18).AddMinutes(30);
+        if (now >= next)
+            next = next.AddDays(1);
+        return next;
+    }
+
+    private sealed record BackupLastFile(bool? Ok, string? DumpFileName, string? Error, DateTime? AtUtc);
 
     private string ResolveFolder(string folder)
     {

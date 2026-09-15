@@ -27,9 +27,20 @@ public sealed class RestoreBackupRequest
 {
     public string DumpFileName { get; set; } = "";
     public string Password { get; set; } = "";
+    public string Confirmation { get; set; } = "";
 }
 
 public sealed record RestoreBackupResult(string DumpFileName, bool KycRestored);
+
+public sealed record BackupStatusDto(
+    string Folder,
+    string PgDumpPath,
+    string LastStatus,
+    string? LastDumpFileName,
+    string? LastError,
+    DateTime? LastRunAtUtc,
+    DateTime NextRunAtLocal,
+    IReadOnlyList<BackupFileDto> Files);
 
 public interface IBackupProcess
 {
@@ -47,4 +58,5 @@ public interface IBackupService
     Task<Result<IReadOnlyList<BackupFileDto>>> ListAsync(CancellationToken cancellationToken = default);
     Task<Result<BackupRunResult>> BackupNowAsync(CancellationToken cancellationToken = default);
     Task<Result<RestoreBackupResult>> RestoreAsync(RestoreBackupRequest request, CancellationToken cancellationToken = default);
+    Task<Result<BackupStatusDto>> GetStatusAsync(CancellationToken cancellationToken = default);
 }

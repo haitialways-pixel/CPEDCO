@@ -26,7 +26,8 @@ public sealed class DataSeeder
         var db = services.GetRequiredService<CpcredoDbContext>();
         var config = services.GetRequiredService<IConfiguration>();
         var logger = services.GetRequiredService<ILogger<DataSeeder>>();
-        var seedEnabled = config.GetValue("Seed:Enabled", true);
+        var env = services.GetService<IHostEnvironment>();
+        var seedEnabled = config.GetValue("Seed:Enabled", true) && env?.IsProduction() != true;
         if (!seedEnabled)
         {
             await BootstrapProductionAsync(services, db, logger, cancellationToken);
@@ -197,6 +198,7 @@ public sealed class DataSeeder
         await EnsureChartOfAccountsAsync(db, cancellationToken);
         await EnsureRolesOnlyAsync(db, cancellationToken);
         await EnsureSavingsProductsAsync(db, logger, cancellationToken);
+        // No membership classes, founders, usagers, demo tills, or extra staff.
 
         if (await db.Users.AnyAsync(cancellationToken))
         {

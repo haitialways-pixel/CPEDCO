@@ -8,7 +8,8 @@ SERVEUR (un seul PC)
 3. Dossier (défaut : C:\CPCREDO)
 4. Mot de passe PostgreSQL (utilisateur postgres)
 5. Notez le mot de passe admin affiché UNE FOIS
-6. Changez-le à la première connexion : http://IP-DU-SERVEUR:5080
+6. Changez-le à la première connexion : https://IP-DU-SERVEUR:5443
+   La première visite du navigateur peut afficher un avertissement (certificat auto-signé). Continuer vers le site.
 
 CLIENT (caissiers, autres PC)
 1. Double-cliquer INSTALLER-CLIENT.bat
@@ -18,3 +19,4 @@ CLIENT (caissiers, autres PC)
 
 Le mot de passe d’installation n’est pas écrit dans ce fichier.
 Pas de fondateurs ni de données de démonstration en production.
+Sauvegarde automatique : tous les jours a 18:30 (tache CPCREDO-Backup). Dossier habituel : C:\CPCREDO\backups.

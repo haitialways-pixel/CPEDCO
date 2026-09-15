@@ -13,11 +13,23 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddDataProtection()
+        .SetApplicationName("CPCREDO")
+        .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "data", "dp-keys")));
+}
+else
+{
+    builder.Services.AddDataProtection().SetApplicationName("CPCREDO");
+}
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = 6_291_456;
@@ -39,36 +51,39 @@ builder.Services.AddControllers(options =>
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
 
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
+if (builder.Environment.IsDevelopment())
 {
-    options.SwaggerDoc("v1", new OpenApiInfo
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(options =>
     {
-        Title = "CPCREDO API",
-        Version = "v1",
-        Description = $"{Letterhead.LegalName} — API du personnel."
-    });
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Description = "JWT. Exemple : Bearer {token}",
-        Name = "Authorization",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT"
-    });
-    options.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
+        options.SwaggerDoc("v1", new OpenApiInfo
         {
-            new OpenApiSecurityScheme
+            Title = "CPCREDO API",
+            Version = "v1",
+            Description = $"{Letterhead.LegalName} — API du personnel."
+        });
+        options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Description = "JWT. Exemple : Bearer {token}",
+            Name = "Authorization",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT"
+        });
+        options.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
             {
-                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
-            },
-            Array.Empty<string>()
-        }
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+                },
+                Array.Empty<string>()
+            }
+        });
+        options.OperationFilter<IdempotencyHeaderOperationFilter>();
     });
-    options.OperationFilter<IdempotencyHeaderOperationFilter>();
-});
+}
 
 var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
     ?? ["http://localhost:5173", "http://localhost:3000"];
@@ -100,32 +115,31 @@ app.UseExceptionHandler(errorApp =>
         if (ex is not null)
             logger.LogError(ex, "Unhandled exception on {Method} {Path}", context.Request.Method, context.Request.Path);
 
-        context.Response.ContentType = "application/json";
+        context.Response.ContentType = "application/problem+json";
+        var isDev = app.Environment.IsDevelopment();
 
         if (ex is PostedJournalImmutableException posted)
         {
-            context.Response.StatusCode = StatusCodes.Status409Conflict;
-            await context.Response.WriteAsJsonAsync(new { code = posted.Code, error = posted.Message });
+            await WriteProductionProblem(context, StatusCodes.Status409Conflict, posted.Code, posted.Message, isDev ? posted.ToString() : null);
             return;
         }
 
         if (ex is DomainException domain)
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await context.Response.WriteAsJsonAsync(new { code = domain.Code, error = domain.Message });
+            await WriteProductionProblem(context, StatusCodes.Status400BadRequest, domain.Code, domain.Message, isDev ? domain.ToString() : null);
             return;
         }
 
-        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-        await context.Response.WriteAsJsonAsync(new
-        {
-            code = "server.error",
-            error = "Une erreur interne s’est produite.",
-            detail = app.Environment.IsDevelopment() ? ex?.ToString() : null
-        });
+        await WriteProductionProblem(
+            context,
+            StatusCodes.Status500InternalServerError,
+            "server.error",
+            "Une erreur interne s’est produite.",
+            isDev ? ex?.ToString() : null);
     });
 });
 
+if (!app.Environment.IsEnvironment("Testing"))
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<CpcredoDbContext>();
@@ -169,15 +183,6 @@ if (app.Environment.IsDevelopment())
         options.DocumentTitle = "CPCREDO API";
     });
 }
-else
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "CPCREDO API v1");
-        options.DocumentTitle = "CPCREDO API";
-    });
-}
 
 app.UseCors("StaffUi");
 var spaStatic = new StaticFileOptions
@@ -202,21 +207,51 @@ app.UseStaticFiles(spaStatic);
 app.UseAuthentication();
 app.Use(async (context, next) =>
 {
-    var mustChangePassword = context.User.Identity?.IsAuthenticated == true
-        && bool.TryParse(context.User.FindFirst("must_change_password")?.Value, out var required)
-        && required;
-    var allowedDuringPasswordChange = context.Request.Path.StartsWithSegments("/api/auth/change-password")
-        || context.Request.Path.StartsWithSegments("/api/auth/me");
-
-    if (mustChangePassword && !allowedDuringPasswordChange)
+    if (context.User.Identity?.IsAuthenticated == true)
     {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        await context.Response.WriteAsJsonAsync(new
+        var sessions = context.RequestServices.GetRequiredService<CPCREDO.Application.Identity.IStaffSessionStore>();
+        var clock = context.RequestServices.GetRequiredService<CPCREDO.Application.Common.IClock>();
+        var jwtOptions = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<CPCREDO.Infrastructure.Identity.JwtOptions>>().Value;
+        var userIdRaw = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? context.User.FindFirst("sub")?.Value
+            ?? context.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+        var jti = context.User.FindFirst("jti")?.Value
+            ?? context.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value
+            ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.SerialNumber)?.Value;
+        var idleExpired = false;
+        if (!Guid.TryParse(userIdRaw, out var userId) || !Guid.TryParse(jti, out var sessionId)
+            || !sessions.TryValidate(sessionId, userId, clock.UtcNow, TimeSpan.FromMinutes(Math.Max(1, jwtOptions.IdleMinutes)), out idleExpired))
         {
-            code = "auth.password_change_required",
-            error = "Le changement de mot de passe est obligatoire avant de continuer."
-        });
-        return;
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                code = "auth.session_expired",
+                error = idleExpired
+                    ? "Session expirée (inactivité de 12 minutes). Connectez-vous à nouveau."
+                    : "Session invalide. Connectez-vous à nouveau."
+            });
+            return;
+        }
+
+        sessions.Touch(sessionId, clock.UtcNow);
+
+        var mustChangePassword = bool.TryParse(context.User.FindFirst("must_change_password")?.Value, out var required)
+            && required;
+        var path = context.Request.Path;
+        var allowedDuringPasswordChange = path.StartsWithSegments("/api/auth/change-password")
+            || path.StartsWithSegments("/api/auth/me")
+            || path.StartsWithSegments("/api/auth/logout");
+
+        if (mustChangePassword && !allowedDuringPasswordChange)
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                code = "auth.password_change_required",
+                error = "Le changement de mot de passe est obligatoire avant de continuer."
+            });
+            return;
+        }
     }
 
     await next();
@@ -244,3 +279,33 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 app.MapFallbackToFile("index.html", spaStatic);
 
 app.Run();
+
+static bool LooksLikeSqlOrStack(string? text)
+{
+    if (string.IsNullOrEmpty(text)) return false;
+    return text.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("SqlException", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("SELECT ", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("INSERT ", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("UPDATE ", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("DELETE FROM", StringComparison.OrdinalIgnoreCase)
+        || text.Contains(" at ", StringComparison.Ordinal)
+        || text.Contains("\n   at ");
+}
+
+static async Task WriteProductionProblem(HttpContext context, int status, string code, string title, string? detail)
+{
+    context.Response.StatusCode = status;
+    var safeTitle = LooksLikeSqlOrStack(title) ? "Une erreur interne s’est produite." : title;
+    var problem = new ProblemDetails
+    {
+        Status = status,
+        Title = safeTitle,
+        Type = code
+    };
+    if (!string.IsNullOrEmpty(detail) && !LooksLikeSqlOrStack(detail))
+        problem.Detail = detail;
+    problem.Extensions["code"] = code;
+    problem.Extensions["error"] = safeTitle;
+    await context.Response.WriteAsJsonAsync(problem);
+}

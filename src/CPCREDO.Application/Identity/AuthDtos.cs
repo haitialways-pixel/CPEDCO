@@ -4,6 +4,12 @@ namespace CPCREDO.Application.Identity;
 
 public sealed record LoginRequest(string Username, string Password);
 
+public sealed record MfaVerifyRequest(string Ticket, string Code);
+
+public sealed record MfaSetupDto(string ManualKey, string OtpauthUrl, string QrPngDataUrl);
+
+public sealed record ResetMfaRequest(string Password);
+
 public sealed record RoleDto(
     string Name,
     string DisplayNameFr,
@@ -27,13 +33,17 @@ public sealed record BranchDto(
     bool IsHeadquarters);
 
 public sealed record LoginResponse(
-    string AccessToken,
-    DateTime ExpiresAtUtc,
-    DateTime ExpiresAtPortAuPrince,
-    UserDto User,
-    InstitutionPublicDto Institution,
-    BranchDto Branch,
-    IReadOnlyList<RoleDto> Roles);
+    string? AccessToken,
+    DateTime? ExpiresAtUtc,
+    DateTime? ExpiresAtPortAuPrince,
+    UserDto? User,
+    InstitutionPublicDto? Institution,
+    BranchDto? Branch,
+    IReadOnlyList<RoleDto>? Roles,
+    bool MfaRequired = false,
+    bool MfaSetupRequired = false,
+    string? MfaTicket = null,
+    MfaSetupDto? MfaSetup = null);
 
 public sealed record MeResponse(
     UserDto User,
@@ -51,7 +61,8 @@ public sealed record StaffUserDto(
     Guid BranchId,
     bool IsActive,
     bool MustChangePassword,
-    IReadOnlyList<RoleDto> Roles);
+    IReadOnlyList<RoleDto> Roles,
+    bool MfaEnabled = false);
 
 public sealed record CreateStaffRequest(
     string Username,

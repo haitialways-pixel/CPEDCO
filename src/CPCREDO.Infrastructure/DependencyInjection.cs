@@ -60,6 +60,7 @@ public static class DependencyInjection
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
+                options.MapInboundClaims = false;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
@@ -82,6 +83,21 @@ public static class DependencyInjection
             options.AddPolicy("CanWrite", policy => policy.RequireRole(RoleNames.WriteRoles.ToArray()));
             options.AddPolicy("CanReverse", policy => policy.RequireRole(RoleNames.ReverseRoles.ToArray()));
             options.AddPolicy("CanKycUpload", policy => policy.RequireRole(RoleNames.KycUploadRoles.ToArray()));
+            options.AddPolicy("CanKycManage", policy => policy.RequireRole(RoleNames.KycManageRoles.ToArray()));
+            options.AddPolicy("CanTill", policy => policy.RequireRole(RoleNames.TillRoles.ToArray()));
+            options.AddPolicy("CanDisburse", policy => policy.RequireRole(RoleNames.DisburseRoles.ToArray()));
+            options.AddPolicy("CanCollect", policy => policy.RequireRole(RoleNames.CollectRoles.ToArray()));
+            options.AddPolicy("CanLoanDraft", policy => policy.RequireRole(RoleNames.LoanDraftRoles.ToArray()));
+            options.AddPolicy("CanLoanApprove", policy => policy.RequireRole(RoleNames.LoanApproveRoles.ToArray()));
+            options.AddPolicy("CanCreateMember", policy => policy.RequireRole(RoleNames.MemberCreateRoles.ToArray()));
+            options.AddPolicy("CanEditMember", policy => policy.RequireRole(RoleNames.MemberEditRoles.ToArray()));
+            options.AddPolicy("CanTickets", policy => policy.RequireRole(RoleNames.TicketRoles.ToArray()));
+            options.AddPolicy("CanTreasury", policy => policy.RequireRole(RoleNames.TreasuryRoles.ToArray()));
+            options.AddPolicy("CanTreasuryDraft", policy => policy.RequireRole(RoleNames.TreasuryDraftRoles.ToArray()));
+            options.AddPolicy("CanManageProducts", policy => policy.RequireRole(RoleNames.ProductRoles.ToArray()));
+            options.AddPolicy("CanLivret", policy => policy.RequireRole(RoleNames.LivretRoles.ToArray()));
+            options.AddPolicy("CanManageSavings", policy => policy.RequireRole(RoleNames.SavingsManageRoles.ToArray()));
+            options.AddPolicy("CanJournalPost", policy => policy.RequireRole(RoleNames.JournalPostRoles.ToArray()));
         });
 
         services.AddHttpContextAccessor();
@@ -89,6 +105,9 @@ public static class DependencyInjection
         services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddScoped<IAuditLogger, AuditLogger>();
         services.AddScoped<IIdempotencyStore, IdempotencyStore>();
+        services.AddSingleton<IStaffSessionStore, MemoryStaffSessionStore>();
+        services.AddSingleton<IMfaChallengeStore, MemoryMfaChallengeStore>();
+        services.AddScoped<TotpProtector>();
         services.AddScoped<ITokenService, JwtTokenService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IStaffService, StaffService>();

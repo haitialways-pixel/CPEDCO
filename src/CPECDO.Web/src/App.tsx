@@ -9,6 +9,7 @@ import { ServiceClientPage } from "./pages/ServiceClientPage";
 import { SavingsStatementPage } from "./pages/SavingsStatementPage";
 import { TellerPage } from "./pages/TellerPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { MfaPage } from "./pages/MfaPage";
 import { StaffPage } from "./pages/StaffPage";
 import { BackupPage } from "./pages/BackupPage";
 import { ReportsPage } from "./pages/ReportsPage";
@@ -34,12 +35,12 @@ function Protected({ children }: { children: ReactNode }) {
   const { ready, session } = useAuth();
   if (!ready) return <div className="boot">CPCREDO</div>;
   if (!session) return <Navigate to="/login" replace />;
-  if (session.user.mustChangePassword) return <ChangePasswordPage />;
+  if (session.user.mustChangePassword) return <Navigate to="/changer-mot-de-passe" replace />;
   return <AppShell>{children}</AppShell>;
 }
 
 export function App() {
-  const { ready, session } = useAuth();
+  const { ready, session, mfaChallenge } = useAuth();
 
   if (!ready) {
     return <div className="boot">CPCREDO</div>;
@@ -47,7 +48,38 @@ export function App() {
 
   return (
     <Routes>
-      <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route
+        path="/login"
+        element={
+          session ? (
+            session.user.mustChangePassword ? (
+              <Navigate to="/changer-mot-de-passe" replace />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          ) : mfaChallenge ? (
+            <Navigate to="/mfa" replace />
+          ) : (
+            <LoginPage />
+          )
+        }
+      />
+      <Route
+        path="/mfa"
+        element={session ? <Navigate to="/" replace /> : mfaChallenge ? <MfaPage /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/changer-mot-de-passe"
+        element={
+          !session ? (
+            <Navigate to="/login" replace />
+          ) : session.user.mustChangePassword ? (
+            <ChangePasswordPage />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
       <Route
         path="/"
         element={

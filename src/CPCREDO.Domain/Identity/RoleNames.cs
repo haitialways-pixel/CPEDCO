@@ -48,4 +48,75 @@ public static class RoleNames
     [
         Admin, Gerant
     ];
+
+    /// <summary>Till open/close and cash pad. Admin kept: it was not previously forbidden.</summary>
+    public static readonly IReadOnlyList<string> TillRoles =
+    [
+        Admin, Gerant, Caissier
+    ];
+
+    public static readonly IReadOnlyList<string> DisburseRoles =
+    [
+        Caissier
+    ];
+
+    public static readonly IReadOnlyList<string> CollectRoles =
+    [
+        Caissier, Gerant
+    ];
+
+    public static readonly IReadOnlyList<string> LoanDraftRoles =
+    [
+        Admin, Gerant, OfficierCredit
+    ];
+
+    public static readonly IReadOnlyList<string> LoanApproveRoles =
+    [
+        Admin, Gerant
+    ];
+
+    public static readonly IReadOnlyList<string> MemberEditRoles =
+    [
+        Admin, Gerant, OfficierCredit, ServiceClient
+    ];
+
+    public static readonly IReadOnlyList<string> TicketRoles =
+    [
+        Admin, Gerant, ServiceClient
+    ];
+
+    public static readonly IReadOnlyList<string> TreasuryRoles =
+    [
+        Admin, Gerant
+    ];
+
+    public static readonly IReadOnlyList<string> TreasuryDraftRoles =
+    [
+        Admin, Gerant, Caissier
+    ];
+
+    public static readonly IReadOnlyList<string> ProductRoles =
+    [
+        Admin, Gerant
+    ];
+
+    public static readonly IReadOnlyList<string> LivretRoles =
+    [
+        Admin, Gerant, ServiceClient, Caissier
+    ];
+
+    public static readonly IReadOnlyList<string> SavingsManageRoles =
+    [
+        Admin, Gerant
+    ];
+
+    public static readonly IReadOnlyList<string> JournalPostRoles =
+    [
+        Admin, Gerant, Caissier
+    ];
+
+    public static readonly IReadOnlyList<string> MfaRequiredRoles =
+    [
+        Admin, Gerant
+    ];
 }

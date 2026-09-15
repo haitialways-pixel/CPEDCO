@@ -37,6 +37,13 @@ public sealed class BackupController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("status")]
+    public async Task<ActionResult<BackupStatusDto>> Status(CancellationToken cancellationToken)
+    {
+        var result = await _backup.GetStatusAsync(cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpPost]
     public async Task<ActionResult<BackupRunResult>> BackupNow(CancellationToken cancellationToken)
     {

@@ -205,6 +205,40 @@ function Get-LanIPv4 {
     return @()
 }
 
+function New-OfficeCertificate {
+    param([string]$CertDir, [string]$PfxPassword, [string[]]$LanIps)
+    New-Item -ItemType Directory -Force -Path $CertDir | Out-Null
+    $readme = Join-Path $CertDir "README.txt"
+    Set-Content -LiteralPath $readme -Value "La premiere visite du navigateur peut afficher un avertissement (certificat auto-signe du bureau). Choisissez Continuer vers le site. Aucun nom de domaine public n'est requis." -Encoding UTF8
+    $pfx = Join-Path $CertDir "cpcredo.pfx"
+    if (Test-Path $pfx) {
+        Write-InstallLog "CERT" "OK" "certificat existant reutilise"
+        return
+    }
+    $sanParts = New-Object System.Collections.Generic.List[string]
+    [void]$sanParts.Add("DNS=localhost")
+    [void]$sanParts.Add("DNS=CPCREDO")
+    [void]$sanParts.Add("IPAddress=127.0.0.1")
+    foreach ($ip in $LanIps) {
+        if (-not [string]::IsNullOrWhiteSpace($ip)) { [void]$sanParts.Add("IPAddress=$ip") }
+    }
+    $san = "2.5.29.17={text}" + [string]::Join("&", $sanParts)
+    try {
+        $cert = New-SelfSignedCertificate -Subject "CN=CPCREDO" -FriendlyName "CPCREDO" `
+            -CertStoreLocation "Cert:\LocalMachine\My" `
+            -KeyExportPolicy Exportable -KeySpec KeyExchange -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddYears(10) `
+            -TextExtension @($san)
+        $secure = ConvertTo-SecureString -String $PfxPassword -Force -AsPlainText
+        Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $secure | Out-Null
+        Export-Certificate -Cert $cert -FilePath (Join-Path $CertDir "cpcredo.cer") | Out-Null
+        Write-InstallLog "CERT" "OK" $pfx
+    }
+    catch {
+        throw "Impossible de creer le certificat HTTPS : $($_.Exception.Message)"
+    }
+}
+
 function Show-LargePasswordBox {
     param([string]$Password, [string]$Url)
     $display = Format-AdminPasswordDisplay $Password
@@ -420,18 +454,48 @@ $jwtBytes = New-SecretBytes 32
 $jwtSecret = [Convert]::ToBase64String([byte[]]$jwtBytes)
 $kycRoot = Join-Path $dest "data\kyc"
 $conn = "Host=localhost;Port=5432;Database=cpcredo;Username=cpcredo;Password=$appDbPass"
+$lan = Get-LanIPv4
+$certsDir = Join-Path $dest "certs"
+$pfxPass = New-OneTimePassword
+$existingSettings = Join-Path $dest "appsettings.Production.json"
+if ((Test-Path (Join-Path $certsDir "cpcredo.pfx")) -and (Test-Path $existingSettings)) {
+    try {
+        $old = Get-Content -LiteralPath $existingSettings -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($old.Kestrel.Certificates.Default.Password) { $pfxPass = [string]$old.Kestrel.Certificates.Default.Password }
+        elseif ($old.Kestrel.Endpoints.HttpsLan.Certificate.Password) { $pfxPass = [string]$old.Kestrel.Endpoints.HttpsLan.Certificate.Password }
+    } catch { }
+}
+try {
+    New-OfficeCertificate -CertDir $certsDir -PfxPassword $pfxPass -LanIps $lan
+}
+catch {
+    Fail-Step "CERT" $_.Exception.Message "Verifiez que Windows peut creer un certificat auto-signe (module PKI), puis relancez INSTALLER-SERVEUR.bat."
+}
+$pfxRel = "certs/cpcredo.pfx"
 
 $settings = @"
 {
-  "Urls": "http://0.0.0.0:5080",
   "ConnectionStrings": {
     "Default": "$(Escape-JsonString $conn)"
+  },
+  "Kestrel": {
+    "Endpoints": {
+      "HttpLocal": { "Url": "http://127.0.0.1:5080" },
+      "HttpsLan": {
+        "Url": "https://0.0.0.0:5443",
+        "Certificate": {
+          "Path": "$(Escape-JsonString $pfxRel)",
+          "Password": "$(Escape-JsonString $pfxPass)"
+        }
+      }
+    }
   },
   "Jwt": {
     "Issuer": "CPCREDO",
     "Audience": "CPCREDO.Staff",
     "Secret": "$(Escape-JsonString $jwtSecret)",
-    "ExpiryMinutes": 480
+    "ExpiryMinutes": 480,
+    "IdleMinutes": 12
   },
   "Cors": { "Origins": [] },
   "Seed": { "Enabled": false },
@@ -450,7 +514,8 @@ $settings = @"
 try {
     Set-Content -LiteralPath (Join-Path $dest "appsettings.Production.json") -Value $settings -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $dest "appsettings.json") -Value $settings -Encoding UTF8
-    Write-InstallLog "SETTINGS" "OK" "Seed:Enabled false ; http://0.0.0.0:5080"
+    Write-InstallLog "SETTINGS" "OK" "Seed:Enabled false ; https://0.0.0.0:5443 + http://127.0.0.1:5080"
+    $pfxPass = $null
 }
 catch {
     Fail-Step "SETTINGS" "Impossible d'ecrire appsettings.Production.json." "Verifiez les droits sur $dest puis relancez INSTALLER-SERVEUR.bat."
@@ -470,7 +535,6 @@ $starter = @"
 @echo off
 cd /d "$dest"
 set ASPNETCORE_ENVIRONMENT=Production
-set ASPNETCORE_URLS=http://0.0.0.0:5080
 "$exe"
 "@
 Set-Content -LiteralPath (Join-Path $dest "Start-CPCREDO.cmd") -Value $starter -Encoding ASCII
@@ -488,19 +552,49 @@ if ($taskCode -ne 0) {
 }
 Write-InstallLog "TASK" "OK" "tache CPCREDO au demarrage"
 
+$backupSrc = Join-Path $UsbRoot "backup.ps1"
+if (-not (Test-Path $backupSrc)) {
+    $backupSrc = Join-Path $UsbRoot "deploy\windows\backup.ps1"
+}
+if (-not (Test-Path $backupSrc)) {
+    Fail-Step "BACKUP_SCRIPT" "backup.ps1 introuvable sur la cle USB." "Recreez la cle avec publish.ps1."
+}
+Copy-Item -LiteralPath $backupSrc -Destination (Join-Path $dest "backup.ps1") -Force
+Write-InstallLog "BACKUP_SCRIPT" "OK" (Join-Path $dest "backup.ps1")
+
+$backupTr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $dest "backup.ps1")`""
+$prev = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+schtasks /Query /TN "CPCREDO-Backup" | Out-Null
+$backupExists = $LASTEXITCODE -eq 0
+if ($backupExists) {
+    schtasks /Change /TN "CPCREDO-Backup" /TR $backupTr | Out-Null
+    $backupTaskCode = $LASTEXITCODE
+    Write-InstallLog "BACKUP_TASK" "OK" "tache CPCREDO-Backup : chemin mis a jour"
+} else {
+    schtasks /Create /TN "CPCREDO-Backup" /SC DAILY /ST 18:30 /RL HIGHEST /RU SYSTEM /F /TR $backupTr | Out-Null
+    $backupTaskCode = $LASTEXITCODE
+    Write-InstallLog "BACKUP_TASK" "OK" "tache CPCREDO-Backup quotidienne 18:30"
+}
+$ErrorActionPreference = $prev
+if ($backupTaskCode -ne 0) {
+    Fail-Step "BACKUP_TASK" "Impossible d'enregistrer la tache planifiee CPCREDO-Backup." "Relancez INSTALLER-SERVEUR.bat en tant qu'administrateur."
+}
+
 $prev = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 netsh advfirewall firewall delete rule name="CPCREDO 5080" | Out-Null
-netsh advfirewall firewall add rule name="CPCREDO 5080" dir=in action=allow protocol=TCP localport=5080 profile=private | Out-Null
+netsh advfirewall firewall delete rule name="CPCREDO 5443" | Out-Null
+netsh advfirewall firewall add rule name="CPCREDO 5443" dir=in action=allow protocol=TCP localport=5443 profile=private | Out-Null
 $fw = $LASTEXITCODE
 $ErrorActionPreference = $prev
 if ($fw -ne 0) {
-    Fail-Step "FIREWALL" "Impossible d'ouvrir le port 5080 (reseau prive)." "Relancez INSTALLER-SERVEUR.bat en tant qu'administrateur."
+    Fail-Step "FIREWALL" "Impossible d'ouvrir le port 5443 (reseau prive)." "Relancez INSTALLER-SERVEUR.bat en tant qu'administrateur."
 }
-Write-InstallLog "FIREWALL" "OK" "port 5080 profil prive"
+Write-InstallLog "FIREWALL" "OK" "port 5443 profil prive (HTTPS)"
 
 $env:ASPNETCORE_ENVIRONMENT = "Production"
-$env:ASPNETCORE_URLS = "http://0.0.0.0:5080"
+Remove-Item Env:ASPNETCORE_URLS -ErrorAction SilentlyContinue
 $env:Seed__BootstrapAdminPassword = $adminOnce
 try {
     $proc = Start-Process -FilePath $exe -WorkingDirectory $dest -PassThru -WindowStyle Hidden
@@ -527,9 +621,8 @@ if (-not $up) {
 }
 Write-InstallLog "HEALTH" "OK" "http://127.0.0.1:5080/health"
 
-$lan = Get-LanIPv4
-$url = "http://127.0.0.1:5080"
-if ($lan.Count -gt 0) { $url = "http://$($lan[0]):5080" }
+$url = "https://127.0.0.1:5443"
+if ($lan.Count -gt 0) { $url = "https://$($lan[0]):5443" }
 
 $onceFile = Join-Path $dest "data\admin-initial-password.txt"
 $userCount = "0"
@@ -559,9 +652,10 @@ $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("CPCREDO est pret.")
 $lines.Add("")
 $lines.Add("Ouvrez :")
-$lines.Add("http://127.0.0.1:5080")
-foreach ($ip in $lan) { $lines.Add("http://${ip}:5080") }
+foreach ($ip in $lan) { $lines.Add("https://${ip}:5443") }
+$lines.Add("Admin local : http://127.0.0.1:5080")
 $lines.Add("")
+$lines.Add("La premiere visite HTTPS peut afficher un avertissement (certificat auto-signe).")
 $lines.Add("Changez le mot de passe a la premiere connexion.")
 $lines.Add("")
 $lines.Add("Si l'ecran n'a pas change : Ctrl+F5 (ou fermez l'onglet).")

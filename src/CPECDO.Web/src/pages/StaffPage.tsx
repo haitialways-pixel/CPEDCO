@@ -1,7 +1,15 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { assignStaffRole, createStaff, disableStaff, fetchStaff, resetStaffPassword, staffRoleNames } from "../api/staff";
+import {
+  assignStaffRole,
+  createStaff,
+  disableStaff,
+  fetchStaff,
+  resetStaffMfa,
+  resetStaffPassword,
+  staffRoleNames
+} from "../api/staff";
 import { useAuth } from "../auth/AuthContext";
 import type { StaffUser } from "../api/types";
 
@@ -105,6 +113,7 @@ export function StaffPage() {
               <span>
                 {user.isActive ? t("staff.active") : t("staff.disabled")}
                 {user.mustChangePassword ? ` · ${t("staff.mustChange")}` : ""}
+                {user.mfaEnabled ? ` · ${t("staff.mfaOn")}` : ""}
                 {user.roles[0] ? ` · ${t(`roles.${user.roles[0].name}`)}` : ""}
               </span>
             </div>
@@ -135,6 +144,18 @@ export function StaffPage() {
               >
                 {t("staff.resetPassword")}
               </button>
+              {user.mfaEnabled ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    const password = window.prompt(t("staff.resetMfaPrompt"));
+                    if (password) void update(user.id, () => resetStaffMfa(token, user.id, password));
+                  }}
+                >
+                  {t("staff.resetMfa")}
+                </button>
+              ) : null}
             </div>
           </article>
         ))}
