@@ -3,6 +3,9 @@ import { parseError, apiFetch, getToken } from "./client";
 export type BackupSettings = {
   folder: string;
   pgDumpPath: string;
+  autoBackupEnabled: boolean;
+  retentionDays: number;
+  keepFiles: number;
 };
 
 export type BackupFile = {
@@ -11,6 +14,7 @@ export type BackupFile = {
   dumpBytes: number;
   kycZipFileName: string | null;
   kycZipBytes: number | null;
+  status: string;
 };
 
 export type BackupRunResult = {
@@ -26,8 +30,12 @@ export type BackupStatus = {
   lastDumpFileName: string | null;
   lastError: string | null;
   lastRunAtUtc: string | null;
-  nextRunAtLocal: string;
+  nextRunAtLocal: string | null;
   files: BackupFile[];
+  autoBackupEnabled: boolean;
+  autoBackupState: string;
+  retentionDays: number;
+  keepFiles: number;
 };
 
 function headers(): HeadersInit {
@@ -48,7 +56,12 @@ export async function saveBackupSettings(settings: BackupSettings): Promise<Back
   const response = await apiFetch("/api/v1/admin/backup/settings", {
     method: "PUT",
     headers: headers(),
-    body: JSON.stringify(settings)
+    body: JSON.stringify({
+      folder: settings.folder,
+      pgDumpPath: settings.pgDumpPath,
+      retentionDays: settings.retentionDays,
+      keepFiles: settings.keepFiles
+    })
   });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as BackupSettings;
@@ -68,6 +81,16 @@ export async function runBackup(): Promise<BackupRunResult> {
 
 export async function fetchBackupStatus(): Promise<BackupStatus> {
   const response = await apiFetch("/api/v1/admin/backup/status", { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as BackupStatus;
+}
+
+export async function setAutoBackup(enabled: boolean): Promise<BackupStatus> {
+  const response = await apiFetch("/api/v1/admin/backup/auto", {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ enabled })
+  });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as BackupStatus;
 }

@@ -1,4 +1,5 @@
 using CPCREDO.Application.Admin;
+using CPCREDO.Application.Common;
 using CPCREDO.Application.Members;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Identity;
@@ -44,7 +45,108 @@ public sealed class BackupTests
         Assert.True(status.IsSuccess, status.ErrorMessage);
         Assert.Equal("OK", status.Value!.LastStatus);
         Assert.Equal(result.Value.DumpFileName, status.Value.LastDumpFileName);
-        Assert.True(status.Value.NextRunAtLocal > DateTime.Now.AddMinutes(-1));
+        Assert.Equal("OK", status.Value.Files.First(f => f.DumpFileName == result.Value.DumpFileName).Status);
+        Assert.Contains("OK", File.ReadAllText(Path.Combine(harness.Root, "backup.log")));
+        Assert.DoesNotContain("DROP DATABASE", File.ReadAllText(Path.Combine(harness.Root, "backup.log")), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Admin_enables_auto_backup_task_without_drop()
+    {
+        using var harness = new BackupHarness();
+        harness.Tasks.Exists = false;
+        harness.Tasks.Enabled = false;
+
+        var result = await harness.Backup.SetAutoBackupAsync(true);
+
+        Assert.True(result.IsSuccess, result.ErrorMessage);
+        Assert.True(harness.Tasks.Exists);
+        Assert.True(harness.Tasks.Enabled);
+        Assert.Equal("Activée", result.Value!.AutoBackupState);
+        Assert.True(result.Value.AutoBackupEnabled);
+        Assert.NotNull(result.Value.NextRunAtLocal);
+        Assert.Contains("EnsureEnabled", harness.Tasks.Actions);
+        Assert.DoesNotContain(harness.Process.Calls, c => c.Args.Any(a => a.Contains("DROP", StringComparison.OrdinalIgnoreCase)));
+        Assert.True(File.Exists(Path.Combine(harness.Root, "backup.ps1")));
+        Assert.True(await harness.Db.AuditLogs.AnyAsync(a => a.Action == "Backup.AutoEnabled"));
+    }
+
+    [Fact]
+    public async Task Admin_enable_fails_when_pg_dump_missing_leaves_toggle_off()
+    {
+        using var harness = new BackupHarness();
+        File.Delete(Path.Combine(harness.Root, "pg_dump.exe"));
+        harness.Backup = harness.RecreateService(pgDumpPath: "", searchSystem: false);
+        harness.Tasks.Exists = false;
+        harness.Tasks.Enabled = false;
+
+        var result = await harness.Backup.SetAutoBackupAsync(true);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("backup.pg_dump_missing", result.ErrorCode);
+        Assert.Contains("pg_dump", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.False(harness.Tasks.Enabled);
+        Assert.DoesNotContain("EnsureEnabled", harness.Tasks.Actions);
+        var loaded = await harness.Backup.GetSettingsAsync();
+        Assert.False(loaded.Value!.AutoBackupEnabled);
+        Assert.Contains("FAIL", File.ReadAllText(Path.Combine(harness.Root, "backup.log")));
+        var status = await harness.Backup.GetStatusAsync();
+        Assert.Equal("Désactivée", status.Value!.AutoBackupState);
+        Assert.Null(status.Value.NextRunAtLocal);
+    }
+
+    [Fact]
+    public async Task Admin_enable_fails_when_scheduler_missing_leaves_toggle_off()
+    {
+        using var harness = new BackupHarness();
+        harness.Tasks.SchedulerAvailable = false;
+
+        var result = await harness.Backup.SetAutoBackupAsync(true);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("backup.scheduler_missing", result.ErrorCode);
+        Assert.Contains("Planificateur", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.False(harness.Tasks.Enabled);
+        var loaded = await harness.Backup.GetSettingsAsync();
+        Assert.False(loaded.Value!.AutoBackupEnabled);
+        Assert.Contains("FAIL", File.ReadAllText(Path.Combine(harness.Root, "backup.log")));
+    }
+
+    [Fact]
+    public async Task Gerant_can_backup_but_cannot_toggle_auto()
+    {
+        using var harness = new BackupHarness();
+        harness.User.Roles = [RoleNames.Gerant];
+
+        var backup = await harness.Backup.BackupNowAsync();
+        Assert.True(backup.IsSuccess, backup.ErrorMessage);
+
+        var toggle = await harness.Backup.SetAutoBackupAsync(true);
+        Assert.False(toggle.IsSuccess);
+        Assert.Equal("auth.forbidden", toggle.ErrorCode);
+        Assert.Empty(harness.Tasks.Actions);
+    }
+
+    [Fact]
+    public async Task Admin_disable_does_not_delete_script_or_dumps()
+    {
+        using var harness = new BackupHarness();
+        harness.Tasks.Exists = true;
+        harness.Tasks.Enabled = true;
+        var dump = Path.Combine(harness.BackupFolder, "cpcredo-20260915-1200.dump");
+        File.WriteAllText(dump, "DUMP");
+        var script = Path.Combine(harness.Root, "backup.ps1");
+
+        var result = await harness.Backup.SetAutoBackupAsync(false);
+
+        Assert.True(result.IsSuccess, result.ErrorMessage);
+        Assert.False(harness.Tasks.Enabled);
+        Assert.True(harness.Tasks.Exists);
+        Assert.Equal("Désactivée", result.Value!.AutoBackupState);
+        Assert.Null(result.Value.NextRunAtLocal);
+        Assert.True(File.Exists(dump));
+        Assert.True(File.Exists(script));
+        Assert.True(await harness.Db.AuditLogs.AnyAsync(a => a.Action == "Backup.AutoDisabled"));
     }
 
     [Fact]
@@ -108,15 +210,23 @@ public sealed class BackupTests
     }
 
     [Fact]
-    public async Task Settings_persist_folder_and_pg_dump_path()
+    public async Task Settings_persist_folder_pg_dump_and_retention()
     {
         using var harness = new BackupHarness();
         var folder = Path.Combine(harness.Root, "custom-backups");
-        var saved = await harness.Backup.SaveSettingsAsync(new BackupSettingsDto(folder, @"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe"));
+        var saved = await harness.Backup.SaveSettingsAsync(new BackupSettingsDto(
+            folder,
+            @"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe",
+            AutoBackupEnabled: false,
+            RetentionDays: 21,
+            KeepFiles: 9));
         Assert.True(saved.IsSuccess, saved.ErrorMessage);
         var loaded = await harness.Backup.GetSettingsAsync();
         Assert.Equal(Path.GetFullPath(folder), loaded.Value!.Folder);
         Assert.Contains("pg_dump.exe", loaded.Value.PgDumpPath, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(21, loaded.Value.RetentionDays);
+        Assert.Equal(9, loaded.Value.KeepFiles);
+        Assert.True(loaded.Value.AutoBackupEnabled);
     }
 }
 
@@ -126,9 +236,10 @@ internal sealed class BackupHarness : IDisposable
     public string BackupFolder { get; }
     public string KycRoot { get; }
     public CpcredoDbContext Db { get; }
-    public BackupService Backup { get; }
+    public BackupService Backup { get; set; }
     public TestCurrentUser User { get; }
     public FakeBackupProcess Process { get; }
+    public FakeBackupTaskScheduler Tasks { get; }
 
     public BackupHarness()
     {
@@ -184,6 +295,21 @@ internal sealed class BackupHarness : IDisposable
         var clock = new FixedClock { UtcNow = now };
         var audit = new AuditLogger(Db, clock, User);
         Process = new FakeBackupProcess();
+        Tasks = new FakeBackupTaskScheduler();
+        File.WriteAllText(Path.Combine(Root, "pg_dump.exe"), "fake");
+        File.WriteAllText(Path.Combine(Root, "pg_restore.exe"), "fake");
+        File.WriteAllText(Path.Combine(Root, "backup.ps1"), "# CPCREDO backup");
+        Backup = CreateService(Path.Combine(Root, "pg_dump.exe"), clock, audit, searchSystem: true);
+    }
+
+    public BackupService RecreateService(string pgDumpPath, bool searchSystem = true)
+    {
+        var clock = new FixedClock { UtcNow = new DateTime(2026, 9, 2, 16, 0, 0, DateTimeKind.Utc) };
+        return Backup = CreateService(pgDumpPath, clock, new AuditLogger(Db, clock, User), searchSystem);
+    }
+
+    private BackupService CreateService(string pgDumpPath, FixedClock clock, AuditLogger audit, bool searchSystem)
+    {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -191,18 +317,22 @@ internal sealed class BackupHarness : IDisposable
             })
             .Build();
         var env = new TestHost { ContentRootPath = Root };
-        Backup = new BackupService(
+        return new BackupService(
             Process,
+            Tasks,
             config,
             env,
-            Options.Create(new BackupOptions { Folder = BackupFolder, PgDumpPath = Path.Combine(Root, "pg_dump.exe") }),
+            Options.Create(new BackupOptions
+            {
+                Folder = BackupFolder,
+                PgDumpPath = pgDumpPath,
+                SearchSystemPgDump = searchSystem
+            }),
             Options.Create(new KycStorageOptions { RootPath = KycRoot }),
             User,
             audit,
             clock,
             Db);
-        File.WriteAllText(Path.Combine(Root, "pg_dump.exe"), "fake");
-        File.WriteAllText(Path.Combine(Root, "pg_restore.exe"), "fake");
     }
 
     public void Dispose()
@@ -235,5 +365,46 @@ internal sealed class FakeBackupProcess : IBackupProcess
         if (dashF >= 0 && dashF + 1 < arguments.Count)
             File.WriteAllText(arguments[dashF + 1], "DUMP");
         return Task.FromResult((0, ""));
+    }
+}
+
+internal sealed class FakeBackupTaskScheduler : IBackupTaskScheduler
+{
+    public bool SchedulerAvailable { get; set; } = true;
+    public bool Exists { get; set; }
+    public bool Enabled { get; set; }
+    public DateTime? NextRun { get; set; } = DateTime.Today.AddHours(18).AddMinutes(30);
+    public List<string> Actions { get; } = [];
+
+    public BackupTaskSnapshot Query()
+    {
+        if (!SchedulerAvailable)
+            return new BackupTaskSnapshot(false, false, false, null, "Le Planificateur de tâches est indisponible. La sauvegarde automatique n’a pas été activée.");
+        return new BackupTaskSnapshot(true, Exists, Enabled, Enabled ? NextRun : null, null);
+    }
+
+    public Result<BackupTaskSnapshot> EnsureEnabled(string scriptPath)
+    {
+        Actions.Add("EnsureEnabled");
+        if (!SchedulerAvailable)
+            return Result<BackupTaskSnapshot>.Fail(
+                "backup.scheduler_missing",
+                "Le Planificateur de tâches est indisponible. La sauvegarde automatique n’a pas été activée.");
+        if (string.IsNullOrWhiteSpace(scriptPath) || !File.Exists(scriptPath))
+            return Result<BackupTaskSnapshot>.Fail("backup.script_missing", "Le script backup.ps1 est introuvable. Relancez INSTALLER-SERVEUR.bat.");
+        Exists = true;
+        Enabled = true;
+        return Result<BackupTaskSnapshot>.Ok(Query());
+    }
+
+    public Result<BackupTaskSnapshot> Disable()
+    {
+        Actions.Add("Disable");
+        if (!SchedulerAvailable)
+            return Result<BackupTaskSnapshot>.Fail(
+                "backup.scheduler_missing",
+                "Impossible de désactiver la tâche planifiée CPCREDO-Backup.");
+        Enabled = false;
+        return Result<BackupTaskSnapshot>.Ok(Query());
     }
 }

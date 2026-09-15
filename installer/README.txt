@@ -15,7 +15,8 @@ CLIENT (caissiers, autres PC)
 1. Double-cliquer INSTALLER-CLIENT.bat
 2. Le même mot de passe d’installation
 3. Adresse IP du serveur (sans http, sans port)
-4. Un raccourci CPCREDO est créé sur le Bureau
+4. Un raccourci CPCREDO est créé sur le Bureau et le navigateur s’ouvre sur https://IP:5443
+   La première visite peut afficher un avertissement (certificat auto-signé). Continuer vers le site.
 
 Le mot de passe d’installation n’est pas écrit dans ce fichier.
 Pas de fondateurs ni de données de démonstration en production.

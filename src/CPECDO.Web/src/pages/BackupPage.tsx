@@ -7,20 +7,31 @@ import {
   restoreBackup,
   runBackup,
   saveBackupSettings,
+  setAutoBackup,
   type BackupFile,
   type BackupSettings,
   type BackupStatus
 } from "../api/backup";
 
+const emptySettings: BackupSettings = {
+  folder: "",
+  pgDumpPath: "",
+  autoBackupEnabled: false,
+  retentionDays: 14,
+  keepFiles: 7
+};
+
 export function BackupPage() {
   const { t, i18n } = useTranslation();
   const { session } = useAuth();
-  const [settings, setSettings] = useState<BackupSettings>({ folder: "", pgDumpPath: "" });
+  const [settings, setSettings] = useState<BackupSettings>(emptySettings);
   const [files, setFiles] = useState<BackupFile[]>([]);
   const [lastStatus, setLastStatus] = useState("");
   const [lastDump, setLastDump] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [nextRun, setNextRun] = useState<string | null>(null);
+  const [autoOn, setAutoOn] = useState(false);
+  const [autoState, setAutoState] = useState("Désactivée");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,14 +41,23 @@ export function BackupPage() {
 
   const isAdmin = session?.roles.some((r) => r.name === "Admin") ?? false;
   const canBackup = session?.roles.some((r) => r.name === "Admin" || r.name === "Gerant") ?? false;
+  const locale = i18n.language === "en" ? "en" : "fr-HT";
 
   function applyStatus(status: BackupStatus) {
-    setSettings({ folder: status.folder, pgDumpPath: status.pgDumpPath });
+    setSettings({
+      folder: status.folder,
+      pgDumpPath: status.pgDumpPath,
+      autoBackupEnabled: status.autoBackupEnabled,
+      retentionDays: status.retentionDays > 0 ? status.retentionDays : 14,
+      keepFiles: status.keepFiles > 0 ? status.keepFiles : 7
+    });
     setFiles(status.files);
     setLastStatus(status.lastStatus);
     setLastDump(status.lastDumpFileName);
     setLastError(status.lastError);
     setNextRun(status.nextRunAtLocal);
+    setAutoOn(status.autoBackupEnabled);
+    setAutoState(status.autoBackupState);
   }
 
   async function reload() {
@@ -77,7 +97,23 @@ export function BackupPage() {
       setInfo(t("backup.done", { dump: result.dumpFileName }));
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("backup.runError"));
+      setError(err instanceof Error ? `Échec — ${err.message}` : t("backup.runError"));
+      await reload().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleAuto(enabled: boolean) {
+    if (!isAdmin) return;
+    setError(null);
+    setInfo(null);
+    setBusy(true);
+    try {
+      applyStatus(await setAutoBackup(enabled));
+      setInfo(enabled ? t("backup.autoOn") : t("backup.autoOff"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("backup.toggleError"));
       await reload().catch(() => undefined);
     } finally {
       setBusy(false);
@@ -104,12 +140,13 @@ export function BackupPage() {
     }
   }
 
-  const nextLabel = nextRun
-    ? new Date(nextRun).toLocaleString(i18n.language === "en" ? "en" : "fr-HT", {
-        dateStyle: "short",
-        timeStyle: "short"
-      })
-    : "—";
+  const nextLabel =
+    autoOn && nextRun
+      ? new Date(nextRun).toLocaleString(locale, {
+          dateStyle: "short",
+          timeStyle: "short"
+        })
+      : "—";
 
   return (
     <main className="dashboard">
@@ -119,7 +156,35 @@ export function BackupPage() {
           {error}
         </p>
       ) : null}
-      {info ? <p className="backup-info">{info}</p> : null}
+      {info ? (
+        <p className="backup-info" role="status">
+          {info}
+        </p>
+      ) : null}
+
+      <section className="coming-soon">
+        <h2>{t("backup.auto")}</h2>
+        <label className="backup-toggle">
+          <input
+            type="checkbox"
+            checked={autoOn}
+            disabled={!isAdmin || busy}
+            onChange={(event) => void toggleAuto(event.target.checked)}
+          />
+          <span>
+            <strong className={autoOn ? "backup-state backup-state--on" : "backup-state backup-state--off"}>
+              {autoState || (autoOn ? t("backup.autoOn") : t("backup.autoOff"))}
+            </strong>
+            {autoOn ? (
+              <span>
+                {" "}
+                · {t("backup.nextRun")}: {nextLabel}
+              </span>
+            ) : null}
+          </span>
+        </label>
+        {!isAdmin ? <p className="backup-hint">{t("backup.autoAdminOnly")}</p> : null}
+      </section>
 
       <section className="facts">
         <article>
@@ -132,7 +197,7 @@ export function BackupPage() {
         </article>
         <article>
           <span>{t("backup.nextRun")}</span>
-          <strong>{nextLabel}</strong>
+          <strong>{autoOn ? nextLabel : t("backup.autoOff")}</strong>
         </article>
       </section>
 
@@ -153,6 +218,30 @@ export function BackupPage() {
               value={settings.pgDumpPath}
               onChange={(event) => setSettings({ ...settings, pgDumpPath: event.target.value })}
               placeholder={t("backup.pgDumpPlaceholder")}
+            />
+          </label>
+          <label>
+            {t("backup.retentionDays")}
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={settings.retentionDays}
+              onChange={(event) =>
+                setSettings({ ...settings, retentionDays: Number(event.target.value) || 14 })
+              }
+              required
+            />
+          </label>
+          <label>
+            {t("backup.keepFiles")}
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={settings.keepFiles}
+              onChange={(event) => setSettings({ ...settings, keepFiles: Number(event.target.value) || 7 })}
+              required
             />
           </label>
           <button type="submit" disabled={busy}>
@@ -177,8 +266,20 @@ export function BackupPage() {
             <div>
               <strong>{file.dumpFileName}</strong>
               <span>
+                {new Date(file.createdAtUtc).toLocaleString(locale, {
+                  dateStyle: "short",
+                  timeStyle: "short"
+                })}
+                {" · "}
                 {(file.dumpBytes / 1024).toFixed(1)} Ko
-                {file.kycZipFileName ? ` · ${file.kycZipFileName}` : ""}
+                {" · "}
+                <span
+                  className={
+                    file.status === "OK" ? "backup-file-status backup-file-status--ok" : "backup-file-status backup-file-status--fail"
+                  }
+                >
+                  {file.status === "OK" ? t("backup.ok") : t("backup.fail")}
+                </span>
               </span>
             </div>
             {isAdmin ? (
@@ -186,7 +287,7 @@ export function BackupPage() {
                 <button
                   type="button"
                   className="btn-ghost"
-                  disabled={busy}
+                  disabled={busy || file.status !== "OK"}
                   onClick={() => {
                     setRestoreName(file.dumpFileName);
                     setRestorePassword("");

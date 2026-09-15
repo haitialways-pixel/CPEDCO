@@ -51,6 +51,16 @@ public sealed class BackupController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpPut("auto")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<ActionResult<BackupStatusDto>> SetAuto(
+        [FromBody] AutoBackupRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _backup.SetAutoBackupAsync(request.Enabled, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpPost("restore")]
     [Authorize(Policy = "AdminOnly")]
     public async Task<ActionResult<RestoreBackupResult>> Restore(

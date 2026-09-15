@@ -205,15 +205,86 @@ function Get-LanIPv4 {
     return @()
 }
 
+function Open-CpcredoUrl {
+    param([string]$Url)
+    try {
+        $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
+        Start-Process -FilePath $cmd -ArgumentList "/c start `"`" `"$Url`"" -WindowStyle Hidden | Out-Null
+        return
+    }
+    catch { }
+    try { Start-Process $Url | Out-Null } catch { }
+}
+
+function New-DesktopUrlShortcut {
+    param([string]$TargetUrl)
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    $urlFile = Join-Path $desktop "CPCREDO.url"
+    Set-Content -LiteralPath $urlFile -Value ("[InternetShortcut]`r`nURL=$TargetUrl`r`n") -Encoding ASCII
+    $lnk = Join-Path $desktop "CPCREDO.lnk"
+    if (Test-Path $lnk) {
+        try { Remove-Item -LiteralPath $lnk -Force } catch { }
+    }
+}
+
+function Start-CpcredoHidden {
+    param([string]$ExePath, [string]$WorkDir)
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $ExePath
+        $psi.WorkingDirectory = $WorkDir
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        try { $psi.EnvironmentVariables["ASPNETCORE_ENVIRONMENT"] = "Production" } catch { }
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        if ($p.Start()) { return $p.Id }
+    }
+    catch { }
+    $p2 = Start-Process -FilePath $ExePath -WorkingDirectory $WorkDir -WindowStyle Hidden -PassThru
+    if ($null -eq $p2) { throw "start failed" }
+    return $p2.Id
+}
+
+function Get-JsonPath {
+    param($Object, [string[]]$Names)
+    $cur = $Object
+    foreach ($name in $Names) {
+        if ($null -eq $cur) { return $null }
+        $prop = $cur.PSObject.Properties[$name]
+        if ($null -eq $prop) { return $null }
+        $cur = $prop.Value
+    }
+    return $cur
+}
+
+function Test-PfxPassword {
+    param([string]$PfxPath, [string]$Password)
+    if (-not (Test-Path $PfxPath)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Password)) { return $false }
+    try {
+        $secure = ConvertTo-SecureString -String $Password -Force -AsPlainText
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $secure)
+        if ($cert) { $cert.Dispose() }
+        return $true
+    }
+    catch { return $false }
+}
+
 function New-OfficeCertificate {
     param([string]$CertDir, [string]$PfxPassword, [string[]]$LanIps)
     New-Item -ItemType Directory -Force -Path $CertDir | Out-Null
     $readme = Join-Path $CertDir "README.txt"
     Set-Content -LiteralPath $readme -Value "La premiere visite du navigateur peut afficher un avertissement (certificat auto-signe du bureau). Choisissez Continuer vers le site. Aucun nom de domaine public n'est requis." -Encoding UTF8
     $pfx = Join-Path $CertDir "cpcredo.pfx"
-    if (Test-Path $pfx) {
+    if ((Test-Path $pfx) -and (Test-PfxPassword -PfxPath $pfx -Password $PfxPassword)) {
         Write-InstallLog "CERT" "OK" "certificat existant reutilise"
         return
+    }
+    if (Test-Path $pfx) {
+        Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+        Write-InstallLog "CERT" "INFO" "ancien certificat recree (mot de passe ne correspondait plus)"
     }
     $sanParts = New-Object System.Collections.Generic.List[string]
     [void]$sanParts.Add("DNS=localhost")
@@ -458,11 +529,14 @@ $lan = Get-LanIPv4
 $certsDir = Join-Path $dest "certs"
 $pfxPass = New-OneTimePassword
 $existingSettings = Join-Path $dest "appsettings.Production.json"
-if ((Test-Path (Join-Path $certsDir "cpcredo.pfx")) -and (Test-Path $existingSettings)) {
+if (Test-Path $existingSettings) {
     try {
         $old = Get-Content -LiteralPath $existingSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($old.Kestrel.Certificates.Default.Password) { $pfxPass = [string]$old.Kestrel.Certificates.Default.Password }
-        elseif ($old.Kestrel.Endpoints.HttpsLan.Certificate.Password) { $pfxPass = [string]$old.Kestrel.Endpoints.HttpsLan.Certificate.Password }
+        $existingPass = Get-JsonPath $old @("Kestrel", "Endpoints", "HttpsLan", "Certificate", "Password")
+        if ([string]::IsNullOrWhiteSpace($existingPass)) {
+            $existingPass = Get-JsonPath $old @("Kestrel", "Certificates", "Default", "Password")
+        }
+        if (-not [string]::IsNullOrWhiteSpace($existingPass)) { $pfxPass = [string]$existingPass }
     } catch { }
 }
 try {
@@ -499,7 +573,7 @@ $settings = @"
   },
   "Cors": { "Origins": [] },
   "Seed": { "Enabled": false },
-  "Backup": { "Folder": "$(Escape-JsonString (Join-Path $dest "backups"))", "PgDumpPath": "" },
+  "Backup": { "Folder": "$(Escape-JsonString (Join-Path $dest "backups"))", "PgDumpPath": "", "AutoBackupEnabled": true, "RetentionDays": 14, "KeepFiles": 7 },
   "KycStorage": { "RootPath": "$(Escape-JsonString $kycRoot)" },
   "Logging": {
     "LogLevel": {
@@ -535,13 +609,13 @@ $starter = @"
 @echo off
 cd /d "$dest"
 set ASPNETCORE_ENVIRONMENT=Production
-"$exe"
+start "CPCREDO" /D "$dest" "$exe"
 "@
 Set-Content -LiteralPath (Join-Path $dest "Start-CPCREDO.cmd") -Value $starter -Encoding ASCII
 
 $adminOnce = New-AdminOneTimePassword
 
-$tr = "`"" + (Join-Path $dest "Start-CPCREDO.cmd") + "`""
+$tr = "$env:ComSpec /c `"$(Join-Path $dest "Start-CPCREDO.cmd")`""
 $prev = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 schtasks /Create /TN "CPCREDO" /SC ONSTART /RL HIGHEST /RU SYSTEM /F /TR $tr | Out-Null
@@ -563,6 +637,16 @@ Copy-Item -LiteralPath $backupSrc -Destination (Join-Path $dest "backup.ps1") -F
 Write-InstallLog "BACKUP_SCRIPT" "OK" (Join-Path $dest "backup.ps1")
 
 $backupTr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $dest "backup.ps1")`""
+$autoBackup = $true
+$bakSettingsPath = Join-Path $dest "data\backup-settings.json"
+if (Test-Path $bakSettingsPath) {
+    try {
+        $bakSaved = Get-Content -LiteralPath $bakSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $autoProp = Get-JsonPath $bakSaved @("autoBackupEnabled")
+        if ($null -eq $autoProp) { $autoProp = Get-JsonPath $bakSaved @("AutoBackupEnabled") }
+        if ($null -ne $autoProp) { $autoBackup = [bool]$autoProp }
+    } catch { }
+}
 $prev = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 schtasks /Query /TN "CPCREDO-Backup" | Out-Null
@@ -576,6 +660,15 @@ if ($backupExists) {
     $backupTaskCode = $LASTEXITCODE
     Write-InstallLog "BACKUP_TASK" "OK" "tache CPCREDO-Backup quotidienne 18:30"
 }
+if ($backupTaskCode -eq 0) {
+    if ($autoBackup) {
+        schtasks /Change /TN "CPCREDO-Backup" /ENABLE | Out-Null
+        Write-InstallLog "BACKUP_TASK" "OK" "sauvegarde automatique Activée (18:30)"
+    } else {
+        schtasks /Change /TN "CPCREDO-Backup" /DISABLE | Out-Null
+        Write-InstallLog "BACKUP_TASK" "OK" "sauvegarde automatique Désactivée"
+    }
+}
 $ErrorActionPreference = $prev
 if ($backupTaskCode -ne 0) {
     Fail-Step "BACKUP_TASK" "Impossible d'enregistrer la tache planifiee CPCREDO-Backup." "Relancez INSTALLER-SERVEUR.bat en tant qu'administrateur."
@@ -585,21 +678,24 @@ $prev = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 netsh advfirewall firewall delete rule name="CPCREDO 5080" | Out-Null
 netsh advfirewall firewall delete rule name="CPCREDO 5443" | Out-Null
-netsh advfirewall firewall add rule name="CPCREDO 5443" dir=in action=allow protocol=TCP localport=5443 profile=private | Out-Null
+netsh advfirewall firewall add rule name="CPCREDO 5443" dir=in action=allow protocol=TCP localport=5443 profile=any | Out-Null
 $fw = $LASTEXITCODE
 $ErrorActionPreference = $prev
 if ($fw -ne 0) {
-    Fail-Step "FIREWALL" "Impossible d'ouvrir le port 5443 (reseau prive)." "Relancez INSTALLER-SERVEUR.bat en tant qu'administrateur."
+    Fail-Step "FIREWALL" "Impossible d'ouvrir le port 5443." "Relancez INSTALLER-SERVEUR.bat en tant qu'administrateur."
 }
-Write-InstallLog "FIREWALL" "OK" "port 5443 profil prive (HTTPS)"
+Write-InstallLog "FIREWALL" "OK" "port 5443 (HTTPS, tous profils)"
 
 $env:ASPNETCORE_ENVIRONMENT = "Production"
 Remove-Item Env:ASPNETCORE_URLS -ErrorAction SilentlyContinue
 $env:Seed__BootstrapAdminPassword = $adminOnce
+$appLog = Join-Path $dest "app.log"
 try {
-    $proc = Start-Process -FilePath $exe -WorkingDirectory $dest -PassThru -WindowStyle Hidden
-    if ($proc) { $script:StartedPid = $proc.Id }
-    Write-InstallLog "START" "OK" ("pid " + $script:StartedPid)
+    $script:StartedPid = Start-CpcredoHidden -ExePath $exe -WorkDir $dest
+    Start-Sleep -Seconds 2
+    $running = @(Get-Process -Name "CPCREDO.WebApi" -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) { $script:StartedPid = $running[0].Id }
+    Write-InstallLog "START" "OK" ("pid " + $script:StartedPid + " (sans fenetre)")
 }
 catch {
     $env:Seed__BootstrapAdminPassword = $null
@@ -607,19 +703,33 @@ catch {
 }
 $env:Seed__BootstrapAdminPassword = $null
 
+function Test-HealthUrl([string]$Uri, [bool]$Https) {
+    try {
+        if ($Https) {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        }
+        $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 3
+        return ($r.StatusCode -eq 200)
+    }
+    catch { return $false }
+}
+
 $up = $false
+$healthUrl = "http://127.0.0.1:5080/health"
 for ($n = 1; $n -le 30; $n++) {
     Start-Sleep -Seconds 2
-    try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:5080/health" -UseBasicParsing -TimeoutSec 3
-        if ($r.StatusCode -eq 200) { $up = $true; break }
+    if ($script:StartedPid -and (Get-Process -Id $script:StartedPid -ErrorAction SilentlyContinue) -eq $null) {
+        $tail = ""
+        if (Test-Path $appLog) { $tail = (Get-Content $appLog -Tail 8 | Out-String) }
+        Fail-Step "HEALTH" "CPCREDO.WebApi.exe s'est arrete au demarrage." ("Journal : $appLog" + [Environment]::NewLine + $tail + "Si le certificat HTTPS pose probleme, relancez INSTALLER-SERVEUR.bat.")
     }
-    catch { }
+    if (Test-HealthUrl "http://127.0.0.1:5080/health" $false) { $up = $true; $healthUrl = "http://127.0.0.1:5080/health"; break }
+    if (Test-HealthUrl "https://127.0.0.1:5443/health" $true) { $up = $true; $healthUrl = "https://127.0.0.1:5443/health"; break }
 }
 if (-not $up) {
-    Fail-Step "HEALTH" "L'application n'a pas repondu sur http://127.0.0.1:5080/health." "Ouvrez le journal. Installez le module ASP.NET Core 8 Hosting Bundle si besoin, verifiez PostgreSQL, puis relancez INSTALLER-SERVEUR.bat."
+    Fail-Step "HEALTH" "L'application n'a pas repondu sur http://127.0.0.1:5080/health ni https://127.0.0.1:5443/health." "Ouvrez C:\CPCREDO\app.log. Installez le module ASP.NET Core 8 Hosting Bundle si besoin, verifiez PostgreSQL, puis relancez INSTALLER-SERVEUR.bat."
 }
-Write-InstallLog "HEALTH" "OK" "http://127.0.0.1:5080/health"
+Write-InstallLog "HEALTH" "OK" $healthUrl
 
 $url = "https://127.0.0.1:5443"
 if ($lan.Count -gt 0) { $url = "https://$($lan[0]):5443" }
@@ -655,11 +765,15 @@ $lines.Add("Ouvrez :")
 foreach ($ip in $lan) { $lines.Add("https://${ip}:5443") }
 $lines.Add("Admin local : http://127.0.0.1:5080")
 $lines.Add("")
+$lines.Add("Le serveur tourne sans fenetre (CPCREDO.WebApi).")
+$lines.Add("Le navigateur s'ouvre sur l'adresse HTTPS du reseau.")
 $lines.Add("La premiere visite HTTPS peut afficher un avertissement (certificat auto-signe).")
 $lines.Add("Changez le mot de passe a la premiere connexion.")
 $lines.Add("")
 $lines.Add("Si l'ecran n'a pas change : Ctrl+F5 (ou fermez l'onglet).")
 $final = [string]::Join([Environment]::NewLine, $lines)
+try { New-DesktopUrlShortcut $url } catch { }
+try { Open-CpcredoUrl $url } catch { }
 [void][System.Windows.Forms.MessageBox]::Show($final, "CPCREDO", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
 Write-InstallLog "DONE" "OK" $url
 Write-Host $final

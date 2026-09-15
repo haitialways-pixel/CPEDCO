@@ -76,11 +76,29 @@ try {
 
     $folder = "C:\CPCREDO\backups"
     $pgDumpPath = ""
+    $retentionDays = 14
+    $keepFiles = 7
     $lockSettings = Join-Path $Root "data\backup-settings.json"
     if (Test-Path $lockSettings) {
         $saved = Get-Content -LiteralPath $lockSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($saved.folder) { $folder = [string]$saved.folder }
-        if ($saved.pgDumpPath) { $pgDumpPath = [string]$saved.pgDumpPath }
+        $folderProp = $saved.PSObject.Properties["folder"]
+        if ($null -eq $folderProp) { $folderProp = $saved.PSObject.Properties["Folder"] }
+        if ($null -ne $folderProp -and $folderProp.Value) { $folder = [string]$folderProp.Value }
+        $dumpProp = $saved.PSObject.Properties["pgDumpPath"]
+        if ($null -eq $dumpProp) { $dumpProp = $saved.PSObject.Properties["PgDumpPath"] }
+        if ($null -ne $dumpProp -and $dumpProp.Value) { $pgDumpPath = [string]$dumpProp.Value }
+        $retProp = $saved.PSObject.Properties["retentionDays"]
+        if ($null -eq $retProp) { $retProp = $saved.PSObject.Properties["RetentionDays"] }
+        if ($null -ne $retProp -and $retProp.Value) {
+            $n = 0
+            if ([int]::TryParse([string]$retProp.Value, [ref]$n) -and $n -gt 0) { $retentionDays = $n }
+        }
+        $keepProp = $saved.PSObject.Properties["keepFiles"]
+        if ($null -eq $keepProp) { $keepProp = $saved.PSObject.Properties["KeepFiles"] }
+        if ($null -ne $keepProp -and $keepProp.Value) {
+            $n = 0
+            if ([int]::TryParse([string]$keepProp.Value, [ref]$n) -and $n -gt 0) { $keepFiles = $n }
+        }
     }
     if ($cfg.Backup -and $cfg.Backup.Folder -and [string]::IsNullOrWhiteSpace($pgDumpPath) -eq $false) { }
     if ($cfg.Backup -and $cfg.Backup.Folder -and -not (Test-Path $lockSettings)) {
@@ -128,8 +146,8 @@ try {
     }
 
     $dumps = @(Get-ChildItem -LiteralPath $folder -Filter "cpcredo-*.dump" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
-    $cutoff = (Get-Date).AddDays(-14)
-    while ($dumps.Count -gt 7) {
+    $cutoff = (Get-Date).AddDays(-$retentionDays)
+    while ($dumps.Count -gt $keepFiles) {
         $oldest = $dumps[0]
         if ($oldest.LastWriteTime -gt $cutoff) { break }
         $kycOld = Join-Path $folder ("cpcredo-kyc-" + $oldest.Name.Substring("cpcredo-".Length))

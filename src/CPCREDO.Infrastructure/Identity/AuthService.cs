@@ -105,8 +105,17 @@ public sealed class AuthService : IAuthService
             var setupRequired = !user.MfaEnabled;
             if (setupRequired)
             {
-                pending = TotpProtector.NewSecret();
-                setup = TotpProtector.BuildSetup(pending, user.Username);
+                try
+                {
+                    pending = TotpProtector.NewSecret();
+                    setup = TotpProtector.BuildSetup(pending, user.Username);
+                }
+                catch (Exception)
+                {
+                    return Result<LoginResponse>.Fail(
+                        "auth.mfa_setup_failed",
+                        "Impossible de préparer l’authentification à deux facteurs. Vérifiez l’installation (Otp.NET) et réessayez.");
+                }
             }
 
             var ticket = _mfa.Start(user.Id, _clock.UtcNow, pending);

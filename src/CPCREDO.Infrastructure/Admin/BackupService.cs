@@ -24,6 +24,7 @@ public sealed class BackupService : IBackupService
     };
 
     private readonly IBackupProcess _process;
+    private readonly IBackupTaskScheduler _tasks;
     private readonly IConfiguration _config;
     private readonly IHostEnvironment _env;
     private readonly IOptions<BackupOptions> _defaults;
@@ -36,6 +37,7 @@ public sealed class BackupService : IBackupService
 
     public BackupService(
         IBackupProcess process,
+        IBackupTaskScheduler tasks,
         IConfiguration config,
         IHostEnvironment env,
         IOptions<BackupOptions> defaults,
@@ -46,6 +48,7 @@ public sealed class BackupService : IBackupService
         CpcredoDbContext db)
     {
         _process = process;
+        _tasks = tasks;
         _config = config;
         _env = env;
         _defaults = defaults;
@@ -73,11 +76,16 @@ public sealed class BackupService : IBackupService
         if (string.IsNullOrWhiteSpace(folder))
             return Result<BackupSettingsDto>.Fail("backup.folder_required", "Le dossier de sauvegarde est obligatoire.");
 
+        var current = LoadSettings();
         var resolved = ResolveFolder(folder);
         Directory.CreateDirectory(resolved);
-        var stored = new BackupSettingsDto(resolved, pgDump);
-        Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath())!);
-        await File.WriteAllTextAsync(SettingsPath(), JsonSerializer.Serialize(stored, JsonOptions), cancellationToken);
+        var stored = new BackupSettingsDto(
+            resolved,
+            pgDump,
+            current.AutoBackupEnabled,
+            ClampRetentionDays(settings.RetentionDays),
+            ClampKeepFiles(settings.KeepFiles));
+        await PersistSettingsAsync(stored, cancellationToken);
         await _audit.LogAsync("Backup.SettingsSaved", "Backup", null, new { folder = resolved }, cancellationToken: cancellationToken);
         return Result<BackupSettingsDto>.Ok(stored);
     }
@@ -91,6 +99,7 @@ public sealed class BackupService : IBackupService
         if (!Directory.Exists(folder))
             return Task.FromResult(Result<IReadOnlyList<BackupFileDto>>.Ok(Array.Empty<BackupFileDto>()));
 
+        var last = ReadLastResult();
         var dumps = Directory.GetFiles(folder, "cpcredo-*.dump")
             .Select(path =>
             {
@@ -103,15 +112,31 @@ public sealed class BackupService : IBackupService
                 var kycPath = kycName is null ? null : Path.Combine(folder, kycName);
                 var kycExists = kycPath is not null && File.Exists(kycPath);
                 var info = new FileInfo(path);
+                var ok = info.Length > 0
+                    && !(string.Equals(last.DumpFileName, name, StringComparison.OrdinalIgnoreCase) && last.Ok == false);
                 return new BackupFileDto(
                     name,
                     DateTime.SpecifyKind(info.LastWriteTimeUtc, DateTimeKind.Utc),
                     info.Length,
                     kycExists ? kycName : null,
-                    kycExists ? new FileInfo(kycPath!).Length : null);
+                    kycExists ? new FileInfo(kycPath!).Length : null,
+                    ok ? "OK" : "FAIL");
             })
             .OrderByDescending(x => x.DumpFileName)
             .ToList();
+
+        if (last.Ok == false
+            && !string.IsNullOrWhiteSpace(last.DumpFileName)
+            && dumps.All(d => !string.Equals(d.DumpFileName, last.DumpFileName, StringComparison.OrdinalIgnoreCase)))
+        {
+            dumps.Insert(0, new BackupFileDto(
+                last.DumpFileName!,
+                last.AtUtc ?? DateTime.UtcNow,
+                0,
+                null,
+                null,
+                "FAIL"));
+        }
 
         return Task.FromResult(Result<IReadOnlyList<BackupFileDto>>.Ok(dumps));
     }
@@ -129,7 +154,7 @@ public sealed class BackupService : IBackupService
         if (pgDump is null)
         {
             var missing = "pg_dump introuvable. Indiquez le dossier bin de PostgreSQL (ex. C:\\Program Files\\PostgreSQL\\16\\bin) dans le chemin pg_dump.";
-            WriteLastResult(false, null, missing);
+            FailBackupLog(missing);
             return Result<BackupRunResult>.Fail("backup.pg_dump_missing", missing);
         }
 
@@ -154,7 +179,7 @@ public sealed class BackupService : IBackupService
         if (code != 0 || !File.Exists(dumpPath))
         {
             var fail = string.IsNullOrWhiteSpace(err) ? "pg_dump a échoué." : err;
-            WriteLastResult(false, dumpName, fail);
+            FailBackupLog(fail, dumpName);
             return Result<BackupRunResult>.Fail("backup.dump_failed", fail);
         }
 
@@ -171,6 +196,8 @@ public sealed class BackupService : IBackupService
             ZipFile.CreateFromDirectory(kycRoot, zipPath, CompressionLevel.SmallestSize, false);
         }
 
+        ApplyRetention(folder, settings.RetentionDays, settings.KeepFiles);
+
         await _audit.LogAsync(
             "Backup.Created",
             "Backup",
@@ -178,28 +205,106 @@ public sealed class BackupService : IBackupService
             new { dump = dumpName, kyc = kycName, folder },
             cancellationToken: cancellationToken);
 
+        WriteBackupLog("OK", dumpName);
         WriteLastResult(true, dumpName, null);
         return Result<BackupRunResult>.Ok(new BackupRunResult(dumpName, kycName, folder));
     }
 
-    public Task<Result<BackupStatusDto>> GetStatusAsync(CancellationToken cancellationToken = default)
+    public async Task<Result<BackupStatusDto>> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         if (!CanBackup())
-            return Task.FromResult(Result<BackupStatusDto>.Fail("auth.forbidden", "Accès refusé."));
+            return Result<BackupStatusDto>.Fail("auth.forbidden", "Accès refusé.");
+
+        var files = await ListAsync(cancellationToken);
+        var list = files.IsSuccess ? files.Value! : Array.Empty<BackupFileDto>();
+        return Result<BackupStatusDto>.Ok(BuildStatus(list));
+    }
+
+    public async Task<Result<BackupStatusDto>> SetAutoBackupAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        if (!_currentUser.Roles.Contains(RoleNames.Admin))
+            return Result<BackupStatusDto>.Fail("auth.forbidden", "Seul l’administrateur peut activer ou désactiver la sauvegarde automatique.");
 
         var settings = LoadSettings();
-        var last = ReadLastResult();
-        var files = ListAsync(cancellationToken).GetAwaiter().GetResult();
-        var list = files.IsSuccess ? files.Value! : Array.Empty<BackupFileDto>();
-        return Task.FromResult(Result<BackupStatusDto>.Ok(new BackupStatusDto(
-            settings.Folder,
-            settings.PgDumpPath,
-            last.Ok is null ? "" : last.Ok.Value ? "OK" : "FAIL",
-            last.DumpFileName,
-            last.Error,
-            last.AtUtc,
-            NextRunLocal(),
-            list)));
+        if (enabled)
+        {
+            var pgDump = ResolvePgDump(settings.PgDumpPath);
+            if (pgDump is null)
+            {
+                var missing = "pg_dump introuvable. Indiquez le dossier bin de PostgreSQL (ex. C:\\Program Files\\PostgreSQL\\16\\bin) dans Administration > Sauvegarde. La sauvegarde automatique n’a pas été activée.";
+                await PersistSettingsAsync(settings with { AutoBackupEnabled = false }, cancellationToken);
+                FailBackupLog(missing);
+                return Result<BackupStatusDto>.Fail("backup.pg_dump_missing", missing);
+            }
+
+            BackupTaskSnapshot task;
+            try
+            {
+                task = _tasks.Query();
+            }
+            catch
+            {
+                task = new BackupTaskSnapshot(false, false, false, null, "Le Planificateur de tâches est indisponible. La sauvegarde automatique n’a pas été activée.");
+            }
+
+            if (!task.SchedulerAvailable)
+            {
+                var msg = string.IsNullOrWhiteSpace(task.Error)
+                    ? "Le Planificateur de tâches est indisponible. La sauvegarde automatique n’a pas été activée."
+                    : task.Error;
+                await PersistSettingsAsync(settings with { AutoBackupEnabled = false }, cancellationToken);
+                FailBackupLog(msg);
+                return Result<BackupStatusDto>.Fail("backup.scheduler_missing", msg);
+            }
+
+            Result<BackupTaskSnapshot> ensured;
+            try
+            {
+                ensured = _tasks.EnsureEnabled(ScriptPath());
+            }
+            catch
+            {
+                ensured = Result<BackupTaskSnapshot>.Fail(
+                    "backup.scheduler_missing",
+                    "Le Planificateur de tâches est indisponible. La sauvegarde automatique n’a pas été activée.");
+            }
+
+            if (!ensured.IsSuccess)
+            {
+                var msg = ensured.ErrorMessage
+                    ?? "Le Planificateur de tâches est indisponible. La sauvegarde automatique n’a pas été activée.";
+                await PersistSettingsAsync(settings with { AutoBackupEnabled = false }, cancellationToken);
+                FailBackupLog(msg);
+                return Result<BackupStatusDto>.Fail(ensured.ErrorCode ?? "backup.scheduler_failed", msg);
+            }
+
+            await PersistSettingsAsync(settings with { AutoBackupEnabled = true }, cancellationToken);
+            await _audit.LogAsync("Backup.AutoEnabled", "Backup", null, new { task = "CPCREDO-Backup" }, cancellationToken: cancellationToken);
+            return await GetStatusAsync(cancellationToken);
+        }
+
+        Result<BackupTaskSnapshot> disabled;
+        try
+        {
+            disabled = _tasks.Disable();
+        }
+        catch
+        {
+            disabled = Result<BackupTaskSnapshot>.Fail(
+                "backup.scheduler_missing",
+                "Impossible de désactiver la tâche planifiée CPCREDO-Backup.");
+        }
+
+        if (!disabled.IsSuccess)
+        {
+            var msg = disabled.ErrorMessage ?? "Impossible de désactiver la tâche planifiée CPCREDO-Backup.";
+            FailBackupLog(msg);
+            return Result<BackupStatusDto>.Fail(disabled.ErrorCode ?? "backup.scheduler_failed", msg);
+        }
+
+        await PersistSettingsAsync(settings with { AutoBackupEnabled = false }, cancellationToken);
+        await _audit.LogAsync("Backup.AutoDisabled", "Backup", null, new { task = "CPCREDO-Backup" }, cancellationToken: cancellationToken);
+        return await GetStatusAsync(cancellationToken);
     }
 
     public async Task<Result<RestoreBackupResult>> RestoreAsync(RestoreBackupRequest request, CancellationToken cancellationToken = default)
@@ -287,15 +392,26 @@ public sealed class BackupService : IBackupService
 
     private string SettingsPath() => Path.Combine(_env.ContentRootPath, "data", "backup-settings.json");
 
+    private string ScriptPath() => Path.Combine(_env.ContentRootPath, "backup.ps1");
+
+    private string BackupLogPath() => Path.Combine(_env.ContentRootPath, "backup.log");
+
     private BackupSettingsDto LoadSettings()
     {
         if (File.Exists(SettingsPath()))
         {
             try
             {
-                var parsed = JsonSerializer.Deserialize<BackupSettingsDto>(File.ReadAllText(SettingsPath()), JsonOptions);
+                var parsed = JsonSerializer.Deserialize<BackupSettingsFile>(File.ReadAllText(SettingsPath()), JsonOptions);
                 if (parsed is not null && !string.IsNullOrWhiteSpace(parsed.Folder))
-                    return parsed with { PgDumpPath = parsed.PgDumpPath ?? "" };
+                {
+                    return new BackupSettingsDto(
+                        parsed.Folder,
+                        parsed.PgDumpPath ?? "",
+                        parsed.AutoBackupEnabled ?? _defaults.Value.AutoBackupEnabled,
+                        ClampRetentionDays(parsed.RetentionDays ?? _defaults.Value.RetentionDays),
+                        ClampKeepFiles(parsed.KeepFiles ?? _defaults.Value.KeepFiles));
+                }
             }
             catch (JsonException)
             {
@@ -305,7 +421,119 @@ public sealed class BackupService : IBackupService
         var folder = string.IsNullOrWhiteSpace(_defaults.Value.Folder)
             ? (OperatingSystem.IsWindows() ? @"C:\CPCREDO\backups" : Path.Combine(_env.ContentRootPath, "backups"))
             : _defaults.Value.Folder;
-        return new BackupSettingsDto(folder, _defaults.Value.PgDumpPath ?? "");
+        return new BackupSettingsDto(
+            folder,
+            _defaults.Value.PgDumpPath ?? "",
+            _defaults.Value.AutoBackupEnabled,
+            ClampRetentionDays(_defaults.Value.RetentionDays),
+            ClampKeepFiles(_defaults.Value.KeepFiles));
+    }
+
+    private async Task PersistSettingsAsync(BackupSettingsDto stored, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath())!);
+        await File.WriteAllTextAsync(SettingsPath(), JsonSerializer.Serialize(stored, JsonOptions), cancellationToken);
+    }
+
+    private BackupStatusDto BuildStatus(IReadOnlyList<BackupFileDto> list)
+    {
+        var settings = LoadSettings();
+        var last = ReadLastResult();
+        BackupTaskSnapshot task;
+        try
+        {
+            task = _tasks.Query();
+        }
+        catch
+        {
+            task = new BackupTaskSnapshot(false, false, false, null, null);
+        }
+
+        var on = task.SchedulerAvailable && task.Exists && task.Enabled;
+        DateTime? next = on ? (task.NextRunLocal ?? NextRunLocal()) : null;
+        return new BackupStatusDto(
+            settings.Folder,
+            settings.PgDumpPath,
+            last.Ok is null ? "" : last.Ok.Value ? "OK" : "FAIL",
+            last.DumpFileName,
+            last.Error,
+            last.AtUtc,
+            next,
+            list,
+            on,
+            on ? "Activée" : "Désactivée",
+            settings.RetentionDays,
+            settings.KeepFiles);
+    }
+
+    private void FailBackupLog(string message, string? dumpFileName = null)
+    {
+        WriteBackupLog("FAIL", message);
+        WriteLastResult(false, dumpFileName, message);
+    }
+
+    private void WriteBackupLog(string status, string detail)
+    {
+        try
+        {
+            var line = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0:yyyy-MM-dd HH:mm:ss}  {1}  {2}{3}",
+                DateTime.Now,
+                status,
+                detail,
+                Environment.NewLine);
+            File.AppendAllText(BackupLogPath(), line);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private void ApplyRetention(string folder, int retentionDays, int keepFiles)
+    {
+        try
+        {
+            if (!Directory.Exists(folder))
+                return;
+            var dumps = Directory.GetFiles(folder, "cpcredo-*.dump")
+                .Select(p => new FileInfo(p))
+                .OrderBy(p => p.LastWriteTimeUtc)
+                .ToList();
+            var cutoff = DateTime.Now.AddDays(-ClampRetentionDays(retentionDays));
+            keepFiles = ClampKeepFiles(keepFiles);
+            while (dumps.Count > keepFiles)
+            {
+                var oldest = dumps[0];
+                if (oldest.LastWriteTime > cutoff)
+                    break;
+                try { oldest.Delete(); } catch (IOException) { }
+                var kycOld = Path.ChangeExtension(
+                    Path.Combine(folder, "cpcredo-kyc-" + oldest.Name["cpcredo-".Length..]),
+                    ".zip");
+                if (File.Exists(kycOld))
+                {
+                    try { File.Delete(kycOld); } catch (IOException) { }
+                }
+                dumps.RemoveAt(0);
+            }
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private static int ClampRetentionDays(int days) => days < 1 ? 14 : Math.Min(days, 365);
+
+    private static int ClampKeepFiles(int keep) => keep < 1 ? 7 : Math.Min(keep, 100);
+
+    private sealed class BackupSettingsFile
+    {
+        public string? Folder { get; set; }
+        public string? PgDumpPath { get; set; }
+        public bool? AutoBackupEnabled { get; set; }
+        public int? RetentionDays { get; set; }
+        public int? KeepFiles { get; set; }
     }
 
     private string LastResultPath() => Path.Combine(_env.ContentRootPath, "data", "backup-last.json");
@@ -359,7 +587,7 @@ public sealed class BackupService : IBackupService
         return Path.GetFullPath(path);
     }
 
-    private static string? ResolvePgDump(string? configured)
+    private string? ResolvePgDump(string? configured)
     {
         var value = (configured ?? "").Trim();
         if (value.Length > 0)
@@ -373,6 +601,9 @@ public sealed class BackupService : IBackupService
             if (File.Exists(value))
                 return value;
         }
+
+        if (!_defaults.Value.SearchSystemPgDump)
+            return null;
 
         foreach (var name in new[] { "pg_dump.exe", "pg_dump" })
         {

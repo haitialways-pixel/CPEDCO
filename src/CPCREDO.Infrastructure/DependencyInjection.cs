@@ -113,6 +113,7 @@ public static class DependencyInjection
         services.AddScoped<IStaffService, StaffService>();
         services.Configure<BackupOptions>(configuration.GetSection(BackupOptions.SectionName));
         services.AddSingleton<IBackupProcess, ProcessBackupRunner>();
+        services.AddSingleton<IBackupTaskScheduler, WindowsBackupTaskScheduler>();
         services.AddScoped<IBackupService, BackupService>();
         services.AddScoped<IInstitutionPublicService, InstitutionPublicService>();
         services.AddScoped<IJournalService, JournalService>();

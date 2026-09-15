@@ -7,16 +7,26 @@ public sealed class BackupOptions
     public const string SectionName = "Backup";
     public string Folder { get; set; } = "";
     public string PgDumpPath { get; set; } = "";
+    public bool AutoBackupEnabled { get; set; } = true;
+    public int RetentionDays { get; set; } = 14;
+    public int KeepFiles { get; set; } = 7;
+    public bool SearchSystemPgDump { get; set; } = true;
 }
 
-public sealed record BackupSettingsDto(string Folder, string PgDumpPath);
+public sealed record BackupSettingsDto(
+    string Folder,
+    string PgDumpPath,
+    bool AutoBackupEnabled = true,
+    int RetentionDays = 14,
+    int KeepFiles = 7);
 
 public sealed record BackupFileDto(
     string DumpFileName,
     DateTime CreatedAtUtc,
     long DumpBytes,
     string? KycZipFileName,
-    long? KycZipBytes);
+    long? KycZipBytes,
+    string Status);
 
 public sealed record BackupRunResult(
     string DumpFileName,
@@ -39,8 +49,31 @@ public sealed record BackupStatusDto(
     string? LastDumpFileName,
     string? LastError,
     DateTime? LastRunAtUtc,
-    DateTime NextRunAtLocal,
-    IReadOnlyList<BackupFileDto> Files);
+    DateTime? NextRunAtLocal,
+    IReadOnlyList<BackupFileDto> Files,
+    bool AutoBackupEnabled,
+    string AutoBackupState,
+    int RetentionDays,
+    int KeepFiles);
+
+public sealed class AutoBackupRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public sealed record BackupTaskSnapshot(
+    bool SchedulerAvailable,
+    bool Exists,
+    bool Enabled,
+    DateTime? NextRunLocal,
+    string? Error);
+
+public interface IBackupTaskScheduler
+{
+    BackupTaskSnapshot Query();
+    Result<BackupTaskSnapshot> EnsureEnabled(string scriptPath);
+    Result<BackupTaskSnapshot> Disable();
+}
 
 public interface IBackupProcess
 {
@@ -59,4 +92,5 @@ public interface IBackupService
     Task<Result<BackupRunResult>> BackupNowAsync(CancellationToken cancellationToken = default);
     Task<Result<RestoreBackupResult>> RestoreAsync(RestoreBackupRequest request, CancellationToken cancellationToken = default);
     Task<Result<BackupStatusDto>> GetStatusAsync(CancellationToken cancellationToken = default);
+    Task<Result<BackupStatusDto>> SetAutoBackupAsync(bool enabled, CancellationToken cancellationToken = default);
 }

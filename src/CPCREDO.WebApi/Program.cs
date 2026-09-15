@@ -16,8 +16,14 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi.Models;
+using CPCREDO.WebApi.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
+if (builder.Environment.IsProduction())
+{
+    builder.Logging.AddProvider(new SimpleFileLoggerProvider(
+        Path.Combine(builder.Environment.ContentRootPath, "app.log")));
+}
 
 builder.Services.AddInfrastructure(builder.Configuration);
 if (!builder.Environment.IsEnvironment("Testing"))

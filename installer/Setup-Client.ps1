@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 param(
     [string]$UsbRoot = ""
 )
@@ -60,40 +60,91 @@ function Confirm-InstallLock {
     exit 1
 }
 
+function Open-CpcredoUrl {
+    param([string]$Url)
+    try {
+        $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
+        Start-Process -FilePath $cmd -ArgumentList "/c start `"`" `"$Url`"" -WindowStyle Hidden | Out-Null
+        return
+    }
+    catch { }
+    try { Start-Process $Url | Out-Null } catch { }
+    try {
+        Start-Process -FilePath (Join-Path $env:SystemRoot "explorer.exe") -ArgumentList $Url | Out-Null
+    }
+    catch { }
+}
+
+function New-DesktopUrlShortcut {
+    param([string]$TargetUrl)
+    $desktops = @(
+        [Environment]::GetFolderPath("Desktop")
+        [Environment]::GetFolderPath("CommonDesktopDirectory")
+    )
+    foreach ($desktop in $desktops) {
+        if ([string]::IsNullOrWhiteSpace($desktop) -or -not (Test-Path $desktop)) { continue }
+        $urlFile = Join-Path $desktop "CPCREDO.url"
+        try {
+            Set-Content -LiteralPath $urlFile -Value ("[InternetShortcut]`r`nURL=$TargetUrl`r`n") -Encoding ASCII
+            Write-Host "Raccourci : $urlFile -> $TargetUrl"
+        }
+        catch { }
+        $lnk = Join-Path $desktop "CPCREDO.lnk"
+        if (Test-Path $lnk) {
+            try { Remove-Item -LiteralPath $lnk -Force } catch { }
+        }
+    }
+}
+
+function Test-ServerUrl {
+    param([string]$Uri)
+    try {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 5
+        return ($r.StatusCode -eq 200)
+    }
+    catch { return $false }
+}
+
 Confirm-InstallLock (Join-Path $UsbRoot "Templates\install.lock")
 
 $serverIp = Read-Host "Adresse IP du serveur CPCREDO (ex. 192.168.1.10)"
 $serverIp = $serverIp.Trim()
 if ($serverIp -match "^https?://") { $serverIp = $serverIp -replace "^https?://", "" }
 $serverIp = $serverIp.TrimEnd("/")
-if ($serverIp -match ":5080$") { $serverIp = $serverIp -replace ":5080$", "" }
-if ($serverIp -match ":5443$") { $serverIp = $serverIp -replace ":5443$", "" }
+if ($serverIp -match ":\d+$") { $serverIp = $serverIp -replace ":\d+$", "" }
 if ([string]::IsNullOrWhiteSpace($serverIp)) {
     Show-ErrorDialog "Adresse IP obligatoire." "Relancez INSTALLER-CLIENT.bat et saisissez l'IP du serveur (sans http, sans port)."
     exit 1
 }
 $url = "https://${serverIp}:5443"
+$health = "https://${serverIp}:5443/health"
 
-function New-UrlShortcut {
-    param([string]$Path, [string]$TargetUrl)
-    Set-Content -LiteralPath $Path -Value "[InternetShortcut]`r`nURL=$TargetUrl`r`n" -Encoding ASCII
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+
+if (-not (Test-ServerUrl $health)) {
+    $msg = "Le serveur n'a pas repondu a $health.`r`n`r`nVerifiez :`r`n- l'adresse IP`r`n- que INSTALLER-SERVEUR.bat a bien termine`r`n- le pare-feu du serveur (port 5443)`r`n`r`nLe raccourci Bureau sera tout de meme cree."
+    [void][System.Windows.Forms.MessageBox]::Show(
+        $msg,
+        "CPCREDO - serveur injoignable",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning)
 }
 
-$desktop = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = Join-Path $desktop "CPCREDO.url"
-New-UrlShortcut $shortcutPath $url
-Write-Host "Raccourci Bureau : $shortcutPath -> $url"
+New-DesktopUrlShortcut $url
 
 $startup = Read-Host "Creer aussi un raccourci au demarrage de Windows ? (o/N)"
 if ($startup -match "^[oOyY]") {
     $startupDir = [Environment]::GetFolderPath("Startup")
-    New-UrlShortcut (Join-Path $startupDir "CPCREDO.url") $url
+    $startupUrl = Join-Path $startupDir "CPCREDO.url"
+    Set-Content -LiteralPath $startupUrl -Value ("[InternetShortcut]`r`nURL=$url`r`n") -Encoding ASCII
     Write-Host "Raccourci Demarrage cree."
 }
 
-Add-Type -AssemblyName System.Windows.Forms | Out-Null
+Open-CpcredoUrl $url
+
 [void][System.Windows.Forms.MessageBox]::Show(
-    "Poste client pret.`r`n`r`nRaccourci Bureau : CPCREDO`r`nAdresse : $url`r`n`r`nAucune copie de l'application, pas de PostgreSQL.",
+    "Poste client pret.`r`n`r`nRaccourci Bureau : CPCREDO`r`nAdresse : $url`r`n`r`nLe navigateur s'ouvre sur cette adresse.`r`nLa premiere visite peut afficher un avertissement de certificat : Continuer vers le site.`r`n`r`nAucune copie de l'application, pas de PostgreSQL.",
     "CPCREDO",
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information)
