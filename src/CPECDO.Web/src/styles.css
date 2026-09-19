@@ -1041,6 +1041,18 @@ input {
   font-size: 1.05rem;
 }
 
+.accounts-panel {
+  margin-top: 0.6rem;
+  border: 2px solid var(--green-deep, #1f5c3a);
+}
+
+.accounts-panel__field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
 .kyc-slots {
   display: flex;
   flex-direction: column;

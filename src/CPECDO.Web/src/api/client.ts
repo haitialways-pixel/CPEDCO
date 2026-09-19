@@ -36,10 +36,14 @@ export function setToken(token: string | null): void {
 
 export async function parseError(response: Response): Promise<string> {
   const text = await response.text();
+  const trimmed = text.trim();
+  if (trimmed.startsWith("<!") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML")) {
+    return "Le serveur n’a pas cette fonction (page HTML à la place de l’API). Redémarrez CPCREDO.WebApi après une mise à jour, puis Ctrl+F5.";
+  }
   const looksLikeProxyFailure =
     response.status >= 500 &&
     (/ECONNREFUSED|ENOTFOUND|proxy error|Bad Gateway|Unable to connect/i.test(text) ||
-      !text.trim().startsWith("{"));
+      !trimmed.startsWith("{"));
 
   if (looksLikeProxyFailure) {
     return "Impossible de joindre le serveur. Démarrez l’API (dotnet run --project src/CPCREDO.WebApi) et PostgreSQL.";
@@ -51,6 +55,21 @@ export async function parseError(response: Response): Promise<string> {
     return body.error ?? `Erreur ${response.status}`;
   } catch {
     return `Erreur ${response.status}`;
+  }
+}
+
+export async function readJson<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  const trimmed = text.trim();
+  if (trimmed.startsWith("<!") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML") || !trimmed) {
+    throw new Error(
+      "Le serveur n’a pas cette fonction (page HTML à la place de l’API). Redémarrez CPCREDO.WebApi après une mise à jour, puis Ctrl+F5."
+    );
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("Réponse du serveur illisible. Redémarrez CPCREDO.WebApi, puis Ctrl+F5.");
   }
 }
 

@@ -421,7 +421,7 @@ function printLoanReceipt(receipt: LoanReceipt) {
     <tr><td>Caissier</td><td>${receipt.cashierName}</td></tr>
     <tr><td>Agence</td><td>${receipt.branchName}</td></tr>
   </table>
-  <p style="margin-top:1.4rem;font-size:10px;letter-spacing:.02em">CPCREDO — Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti</p>
+  <p style="margin-top:1.4rem;font-size:10px;letter-spacing:.02em">CPCREDO — Caisse Populaire Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti</p>
   </body></html>`;
   const w = window.open("", "_blank", "width=480,height=640");
   if (!w) return;

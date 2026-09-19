@@ -1,4 +1,4 @@
-import { getToken, parseError, apiFetch } from "./client";
+import { getToken, parseError, apiFetch, readJson } from "./client";
 
 export type SavingsProduct = {
   id: string;
@@ -136,7 +136,7 @@ export async function fetchSavingsProductCatalog(activeOnly = false): Promise<Sa
   const qs = activeOnly ? "?activeOnly=true" : "";
   const response = await apiFetch(`/api/v1/savings-products${qs}`, { headers: headers() });
   if (!response.ok) throw new Error(await parseError(response));
-  return (await response.json()) as SavingsProduct[];
+  return readJson<SavingsProduct[]>(response);
 }
 
 export async function createSavingsProduct(body: SaveSavingsProduct): Promise<SavingsProduct> {
@@ -146,7 +146,7 @@ export async function createSavingsProduct(body: SaveSavingsProduct): Promise<Sa
     body: JSON.stringify(body)
   });
   if (!response.ok) throw new Error(await parseError(response));
-  return (await response.json()) as SavingsProduct;
+  return readJson<SavingsProduct>(response);
 }
 
 export async function updateSavingsProduct(id: string, body: SaveSavingsProduct): Promise<SavingsProduct> {
@@ -156,7 +156,7 @@ export async function updateSavingsProduct(id: string, body: SaveSavingsProduct)
     body: JSON.stringify(body)
   });
   if (!response.ok) throw new Error(await parseError(response));
-  return (await response.json()) as SavingsProduct;
+  return readJson<SavingsProduct>(response);
 }
 
 export async function deactivateSavingsProduct(id: string): Promise<SavingsProduct> {
@@ -165,7 +165,7 @@ export async function deactivateSavingsProduct(id: string): Promise<SavingsProdu
     headers: headers()
   });
   if (!response.ok) throw new Error(await parseError(response));
-  return (await response.json()) as SavingsProduct;
+  return readJson<SavingsProduct>(response);
 }
 
 export async function fetchSavingsAccount(accountId: string): Promise<SavingsAccount> {

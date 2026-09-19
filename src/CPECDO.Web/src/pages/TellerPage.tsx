@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { fetchMember360, searchMembers, type KycDocument, type Member360, type MemberSummary } from "../api/members";
 import { KycPieces } from "../components/KycPieces";
+import { MemberAccountsPanel } from "../components/MemberAccountsPanel";
 import { downloadLivretPdf, fetchMemberSavings, openMemberAccount, type SavingsAccount } from "../api/savings";
 import {
   acceptInternalMovement,
@@ -91,7 +92,7 @@ function printReceipt(receipt: CashReceipt) {
     <tr><td>Caissier</td><td>${receipt.cashierName}</td></tr>
     <tr><td>Agence</td><td>${receipt.branchName}</td></tr>
   </table>
-  <p style="margin-top:1.4rem;font-size:10px;letter-spacing:.02em">CPCREDO — Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti</p>
+  <p style="margin-top:1.4rem;font-size:10px;letter-spacing:.02em">CPCREDO — Caisse Populaire Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti</p>
   </body></html>`;
   const w = window.open("", "_blank", "width=480,height=640");
   if (!w) return;
@@ -121,7 +122,7 @@ export function TellerPage() {
   const [accountId, setAccountId] = useState("");
   const [amount, setAmount] = useState("");
   const [overrideNote, setOverrideNote] = useState("");
-  const [, setProfile] = useState<Member360 | null>(null);
+  const [profile, setProfile] = useState<Member360 | null>(null);
   const [cashReceived, setCashReceived] = useState("");
   const [lines, setLines] = useState<{ kind: string; savingsAccountId: string; amount: string }[]>([
     { kind: "Epargne", savingsAccountId: "", amount: "" }
@@ -484,6 +485,17 @@ export function TellerPage() {
             <p>
               <strong>{member.fullName}</strong> ({member.memberNo})
             </p>
+            {profile ? (
+              <MemberAccountsPanel
+                member={profile}
+                canOpen={canOpenAccount}
+                onMemberUpdated={(next) => {
+                  setProfile(next);
+                  setAccounts(next.savingsAccounts ?? []);
+                  setAccountId((current) => current || next.savingsAccounts?.[0]?.id || "");
+                }}
+              />
+            ) : null}
             <KycPieces
               memberId={member.id}
               documents={kycDocuments}

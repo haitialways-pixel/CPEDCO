@@ -1,6 +1,6 @@
 # CPCREDO
 
-Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti.
+Caisse Populaire Épargne et de Crédit pour le Développement de l’Ouest — Pétion-Ville, Haïti.
 
 Portail du personnel (caisse, épargne, crédit CT90, trésorerie, rapports).
 

@@ -1,5 +1,5 @@
 CPCREDO — installation USB
-Caisse Populaire d’Épargne et de Crédit pour le Développement de l’Ouest
+Caisse Populaire Épargne et de Crédit pour le Développement de l’Ouest
 Pétion-Ville, Haïti
 
 SERVEUR (un seul PC)

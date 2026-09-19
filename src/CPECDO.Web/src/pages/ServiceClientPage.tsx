@@ -21,6 +21,7 @@ import {
   type SavingsAccount
 } from "../api/savings";
 import { KycPieces } from "../components/KycPieces";
+import { MemberAccountsPanel } from "../components/MemberAccountsPanel";
 import { formatMoney } from "../money";
 
 function canAccessService(roles: string[]) {
@@ -205,6 +206,15 @@ function ServiceDetail({ id }: { id: string }) {
         </article>
       </section>
       <p className="muted">{t("members.ficheLocked")}</p>
+      <MemberAccountsPanel
+        member={member}
+        canOpen
+        canPay
+        onMemberUpdated={(next) => {
+          setMember(next);
+          setAccounts(next.savingsAccounts ?? []);
+        }}
+      />
 
       <section className="card-block">
         <h2>{t("service.pdf")}</h2>
