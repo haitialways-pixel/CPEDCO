@@ -38,6 +38,12 @@ public interface IMemberService
         string? idempotencyKey,
         CancellationToken cancellationToken = default);
 
+    Task<Result<PaySharesResultDto>> PaySharesAsync(
+        Guid id,
+        PaySharesRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
+
     Task<Result<AgExportDto>> GetAgExportAsync(CancellationToken cancellationToken = default);
 
     Task<Result<bool>> AssertCapabilityAsync(

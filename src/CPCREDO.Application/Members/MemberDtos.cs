@@ -61,6 +61,25 @@ public sealed record SubscribePermanentSharesRequest
     public int Quantity { get; set; } = 1;
 }
 
+public sealed class PaySharesRequest
+{
+    public string ShareType { get; set; } = "Qualification";
+    public int? Units { get; set; }
+    public decimal? Amount { get; set; }
+    public string Source { get; set; } = "Till";
+}
+
+public sealed record PaySharesResultDto(
+    Guid MemberId,
+    string ShareType,
+    int UnitsPaid,
+    decimal Amount,
+    string Source,
+    Guid JournalId,
+    int QualificationShareCount,
+    int PermanentShareCount,
+    bool VotingRights);
+
 public sealed record AgVoterDto(
     Guid Id,
     string MemberNo,

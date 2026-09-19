@@ -61,7 +61,29 @@ public sealed class CashPostRequest
 {
     public Guid SavingsAccountId { get; set; }
     public decimal Amount { get; set; }
+    public string? GerantOverrideNote { get; set; }
 }
+
+public sealed class MixedCollectLineRequest
+{
+    public string Kind { get; set; } = "";
+    public Guid? SavingsAccountId { get; set; }
+    public decimal Amount { get; set; }
+}
+
+public sealed class MixedCollectRequest
+{
+    public Guid MemberId { get; set; }
+    public decimal CashReceived { get; set; }
+    public string CurrencyCode { get; set; } = Currencies.Htg;
+    public List<MixedCollectLineRequest> Lines { get; set; } = [];
+}
+
+public sealed record ReceiptAllocationDto(
+    string Kind,
+    string AccountNo,
+    string Label,
+    decimal Amount);
 
 public sealed record ReceiptLetterheadDto(
     string Sigle,
@@ -86,7 +108,8 @@ public sealed record CashReceiptDto(
     string CashierName,
     string BranchName,
     DateTime PostedAtUtc,
-    DateTime PostedAtPortAuPrince);
+    DateTime PostedAtPortAuPrince,
+    IReadOnlyList<ReceiptAllocationDto>? Allocations = null);
 
 public sealed record TillSessionDto(
     Guid Id,

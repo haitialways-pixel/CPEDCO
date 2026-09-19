@@ -6,6 +6,7 @@ import {
   authorizeFicheOverride,
   convertToSocietaire,
   fetchMember360,
+  payShares,
   searchMembers,
   subscribePermanentShares,
   updateMember,
@@ -13,6 +14,13 @@ import {
   type MemberSummary,
   type MemberWrite
 } from "../api/members";
+import {
+  fetchMemberSavings,
+  fetchSavingsProducts,
+  openMemberAccount,
+  type SavingsAccount,
+  type SavingsProduct
+} from "../api/savings";
 import { KycPieces } from "../components/KycPieces";
 import { formatMoney } from "../money";
 
@@ -133,6 +141,15 @@ function RegisterDetail({ id }: { id: string }) {
   const [overrideUser, setOverrideUser] = useState("");
   const [overridePassword, setOverridePassword] = useState("");
   const [grantId, setGrantId] = useState<string | null>(null);
+  const [products, setProducts] = useState<SavingsProduct[]>([]);
+  const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
+  const [openKind, setOpenKind] = useState("Epargne");
+  const [productId, setProductId] = useState("");
+  const [payType, setPayType] = useState("Qualification");
+  const [payUnits, setPayUnits] = useState("1");
+  const [payAmount, setPayAmount] = useState("");
+  const [paySource, setPaySource] = useState("Till");
+  const canOpen = roles.some((r) => ["Admin", "Gerant", "OfficierCredit", "ServiceClient"].includes(r));
 
   useEffect(() => {
     void fetchMember360(id)
@@ -143,6 +160,15 @@ function RegisterDetail({ id }: { id: string }) {
         setIsFounder(data.isFounder);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : t("members.loadError")));
+    void fetchSavingsProducts()
+      .then((list) => {
+        setProducts(list);
+        setProductId((current) => current || list[0]?.id || "");
+      })
+      .catch(() => undefined);
+    void fetchMemberSavings(id)
+      .then(setAccounts)
+      .catch(() => undefined);
   }, [id, t]);
 
   if (!member && !error) return <main className="page">{t("members.loading")}</main>;
@@ -456,6 +482,115 @@ function RegisterDetail({ id }: { id: string }) {
           ) : null}
         </div>
       </form>
+      {canOpen ? (
+        <section className="card-block">
+          <h2>{t("savings.open")}</h2>
+          <p className="muted">{t("savings.empty")}</p>
+          {accounts.length > 0 ? (
+            <ul className="ul-reset">
+              {accounts.map((a) => (
+                <li key={a.id}>
+                  {a.accountNo} — {a.productName} ({a.productKind})
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <form
+            className="search-bar"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setBusy(true);
+              setError(null);
+              void openMemberAccount(id, openKind, openKind === "Epargne" ? productId : undefined)
+                .then(async (opened) => {
+                  setError(null);
+                  if (opened.kind === "Epargne") setAccounts(await fetchMemberSavings(id));
+                  setMember(await fetchMember360(id));
+                })
+                .catch((err: unknown) => setError(err instanceof Error ? err.message : t("savings.openError")))
+                .finally(() => setBusy(false));
+            }}
+          >
+            <select value={openKind} onChange={(e) => setOpenKind(e.target.value)}>
+              <option value="Epargne">{t("savings.kindEpargne")}</option>
+              {member.legalStatus === "Societaire" ? <option value="Qualification">{t("savings.kindQual")}</option> : null}
+              {member.legalStatus === "Societaire" || member.legalStatus === "Auxiliaire" ? (
+                <option value="Permanent">{t("savings.kindPerm")}</option>
+              ) : null}
+            </select>
+            {openKind === "Epargne" ? (
+              <select value={productId} onChange={(e) => setProductId(e.target.value)}>
+                {products
+                  .filter((p) => member.legalStatus !== "Usager" || p.productKind === "AVue")
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.displayName || p.name} ({p.currencyCode})
+                    </option>
+                  ))}
+              </select>
+            ) : null}
+            <button type="submit" disabled={busy}>
+              {busy ? t("savings.opening") : t("savings.open")}
+            </button>
+          </form>
+        </section>
+      ) : null}
+      {canOpen ? (
+        <section className="card-block">
+          <h2>{t("members.payShares")}</h2>
+          <form
+            className="search-bar"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setBusy(true);
+              setError(null);
+              const units = Number(payUnits);
+              const amount = Number(payAmount);
+              void payShares(id, {
+                shareType: payType,
+                units: Number.isFinite(units) && units > 0 ? units : undefined,
+                amount: Number.isFinite(amount) && amount > 0 ? amount : undefined,
+                source: paySource
+              })
+                .then(async () => {
+                  setMember(await fetchMember360(id));
+                })
+                .catch((err: unknown) => setError(err instanceof Error ? err.message : t("members.saveError")))
+                .finally(() => setBusy(false));
+            }}
+          >
+            <select value={payType} onChange={(e) => setPayType(e.target.value)}>
+              {member.legalStatus === "Societaire" ? <option value="Qualification">{t("savings.kindQual")}</option> : null}
+              {member.legalStatus === "Societaire" || member.legalStatus === "Auxiliaire" ? (
+                <option value="Permanent">{t("savings.kindPerm")}</option>
+              ) : null}
+            </select>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={payUnits}
+              onChange={(e) => setPayUnits(e.target.value)}
+              placeholder={t("members.payUnits")}
+            />
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={payAmount}
+              onChange={(e) => setPayAmount(e.target.value)}
+              placeholder={t("members.payAmount")}
+            />
+            <select value={paySource} onChange={(e) => setPaySource(e.target.value)}>
+              <option value="Till">{t("members.payTill")}</option>
+              <option value="Vault">{t("members.payVault")}</option>
+            </select>
+            <button type="submit" disabled={busy || (member.legalStatus === "Usager")}>
+              {t("members.payShares")}
+            </button>
+          </form>
+        </section>
+      ) : null}
       {overrideOpen ? (
         <div className="kyc-modal" role="dialog" aria-modal="true">
           <form className="kyc-modal__card stack-form" onSubmit={(e) => void submitOverride(e)}>

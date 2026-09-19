@@ -578,6 +578,26 @@ public sealed class TellerService : ITellerService
             return Result<CashPostResultDto>.Fail(
                 "teller.insufficient",
                 $"Solde disponible insuffisant ({MoneyDisplay.Format(available, account.CurrencyCode)}).");
+        if (!isDeposit)
+        {
+            var locked = IsTermLocked(account);
+            if (locked)
+            {
+                var note = request.GerantOverrideNote?.Trim();
+                if (!IsManager() || string.IsNullOrWhiteSpace(note))
+                    return Result<CashPostResultDto>.Fail(
+                        "teller.terme_locked",
+                        "Retrait avant échéance refusé. Le gérant peut outrepasser avec une note.");
+                await _audit.LogAsync(
+                    "Till.TermeOverride",
+                    nameof(SavingsAccount),
+                    account.Id,
+                    new { account.AccountNo, amount, note },
+                    tenantId,
+                    _currentUser.UserId,
+                    cancellationToken: cancellationToken);
+            }
+        }
 
         var cashGl = account.Product.CashGlAccountId;
         var liabilityGl = account.Product.LiabilityGlAccountId;
@@ -640,6 +660,243 @@ public sealed class TellerService : ITellerService
             journal.Value.Lines.Count,
             newLedger,
             newAvailable));
+    }
+
+    public async Task<Result<CashPostResultDto>> CollectMixedAsync(
+        MixedCollectRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = RequireWriter();
+        if (!gate.IsSuccess)
+            return Result<CashPostResultDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
+
+        var cash = MoneyAmount.Normalize(request.CashReceived);
+        if (cash <= 0m)
+            return Result<CashPostResultDto>.Fail("teller.amount", "Le montant reçu doit être supérieur à zéro.");
+        if (request.Lines is null || request.Lines.Count == 0)
+            return Result<CashPostResultDto>.Fail("teller.collect_lines", "Ajoutez au moins une ligne (épargne ou parts).");
+
+        var tenantId = _currentUser.TenantId!.Value;
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            var replay = await ReplayAsync(tenantId, idempotencyKey, cancellationToken);
+            if (replay is not null)
+                return Result<CashPostResultDto>.Ok(replay);
+        }
+
+        var member = await _db.Members
+            .Include(m => m.ShareAccounts)
+            .FirstOrDefaultAsync(m => m.Id == request.MemberId && m.TenantId == tenantId, cancellationToken);
+        if (member is null)
+            return Result<CashPostResultDto>.Fail("member.not_found", "Membre introuvable.");
+        if (MembershipRules.ServicesBlocked(member, _clock.UtcNow))
+            return Result<CashPostResultDto>.Fail(
+                "member.usager_expired",
+                "Période d’usage échue : conversion en sociétaire requise avant tout mouvement de caisse.");
+
+        var currency = NormalizeCurrency(request.CurrencyCode) ?? Currencies.Htg;
+        var till = await FindOpenTillAsync(currency, cancellationToken);
+        if (till is null)
+            return Result<CashPostResultDto>.Fail(
+                "till.not_open",
+                "Impossible de poster en caisse : aucune caisse ouverte pour cet utilisateur et cette agence.");
+
+        var lineSum = MoneyAmount.Normalize(request.Lines.Sum(l => MoneyAmount.Normalize(l.Amount)));
+        if (lineSum != cash)
+            return Result<CashPostResultDto>.Fail(
+                "teller.collect_unbalanced",
+                $"Répartissez le montant reçu (espèces) entre épargne et parts. Total des lignes {MoneyDisplay.Format(lineSum, currency)} ≠ {MoneyDisplay.Format(cash, currency)}.");
+
+        var journalLines = new List<CreateJournalLineRequest>
+        {
+            new() { GlAccountId = CashGl(currency), Debit = cash, Credit = 0m, Description = "Caisse" }
+        };
+        var allocations = new List<ReceiptAllocationDto>();
+        SavingsAccount? savingsForReceipt = null;
+        decimal savingsPosted = 0m;
+        var shareIncrements = new List<(ShareAccount Account, int Units, decimal Amount, string Label)>();
+
+        foreach (var raw in request.Lines)
+        {
+            var amount = MoneyAmount.Normalize(raw.Amount);
+            if (amount <= 0m)
+                return Result<CashPostResultDto>.Fail("teller.amount", "Chaque ligne doit avoir un montant supérieur à zéro.");
+            var kind = (raw.Kind ?? "").Trim();
+
+            if (kind.Equals("Epargne", StringComparison.OrdinalIgnoreCase))
+            {
+                if (raw.SavingsAccountId is null || raw.SavingsAccountId == Guid.Empty)
+                    return Result<CashPostResultDto>.Fail(
+                        "savings.account.required",
+                        "Ouvrez d’abord le compte d’épargne, ou enlevez la ligne.");
+                var account = await _db.SavingsAccounts
+                    .Include(a => a.Product)
+                    .Include(a => a.Member)
+                    .FirstOrDefaultAsync(
+                        a => a.Id == raw.SavingsAccountId && a.TenantId == tenantId && a.MemberId == member.Id && a.IsActive,
+                        cancellationToken);
+                if (account is null)
+                    return Result<CashPostResultDto>.Fail("savings.account.not_found", "Compte d’épargne introuvable.");
+                if (account.IsBlocked)
+                    return Result<CashPostResultDto>.Fail("savings.blocked", $"Compte bloqué : {account.BlockedReason ?? "gel administratif"}.");
+                if (account.Product is null)
+                    return Result<CashPostResultDto>.Fail("savings.product.not_found", "Produit d’épargne introuvable.");
+                journalLines.Add(new CreateJournalLineRequest
+                {
+                    GlAccountId = account.Product.LiabilityGlAccountId,
+                    Debit = 0m,
+                    Credit = amount,
+                    Description = "Épargne membre"
+                });
+                allocations.Add(new ReceiptAllocationDto(
+                    "Epargne",
+                    account.AccountNo,
+                    account.Product.DisplayName,
+                    amount));
+                savingsForReceipt = account;
+                savingsPosted += amount;
+                _db.SavingsLedgerEntries.Add(new SavingsLedgerEntry
+                {
+                    TenantId = tenantId,
+                    SavingsAccountId = account.Id,
+                    ValueDateUtc = DateTime.SpecifyKind(
+                        _clock.TodayInPortAuPrince().ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc),
+                    PostedAtUtc = _clock.UtcNow,
+                    EntryType = "Credit",
+                    Amount = amount,
+                    CurrencyCode = account.CurrencyCode,
+                    Description = "Encaissement mixte — épargne",
+                    TillSessionId = till.Id,
+                    IdempotencyKey = allocations.Count == 1 && !string.IsNullOrWhiteSpace(idempotencyKey)
+                        ? idempotencyKey.Trim()
+                        : null
+                });
+            }
+            else if (kind.Equals("Qualification", StringComparison.OrdinalIgnoreCase)
+                     || kind.Equals("Permanent", StringComparison.OrdinalIgnoreCase))
+            {
+                var shareType = kind.Equals("Permanent", StringComparison.OrdinalIgnoreCase)
+                    ? ShareType.Permanent
+                    : ShareType.Qualification;
+                if (shareType == ShareType.Qualification && member.LegalStatus == LegalStatus.Usager)
+                    return Result<CashPostResultDto>.Fail(
+                        "savings.usager_parts",
+                        "Un usager ne peut pas payer de parts de qualification hors conversion.");
+                if (shareType == ShareType.Permanent && member.LegalStatus == LegalStatus.Usager)
+                    return Result<CashPostResultDto>.Fail(
+                        "savings.usager_permanent",
+                        "Un usager ne peut pas payer de parts permanentes.");
+                var share = member.ShareAccounts.FirstOrDefault(s => s.ShareType == shareType && s.IsActive);
+                if (share is null)
+                    return Result<CashPostResultDto>.Fail(
+                        "savings.account.required",
+                        shareType == ShareType.Qualification
+                            ? "Ouvrez d’abord le compte de parts de qualification."
+                            : "Ouvrez d’abord le compte de parts permanentes.");
+                var par = MembershipRules.NormalizeParValue(share.ParValue);
+                if (par <= 0m || amount % par != 0m)
+                    return Result<CashPostResultDto>.Fail(
+                        "teller.share_par",
+                        $"Le montant des parts doit être un multiple de la valeur nominale ({MoneyDisplay.Format(par, Currencies.Htg)}).");
+                var units = (int)(amount / par);
+                if (units < 1)
+                    return Result<CashPostResultDto>.Fail("teller.share_units", "Payez au moins une part.");
+                var capitalCode = shareType == ShareType.Qualification
+                    ? MembershipRules.QualificationCapitalGl
+                    : MembershipRules.PermanentCapitalGl;
+                var capital = await _db.GlAccounts.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.TenantId == tenantId && a.Code == capitalCode, cancellationToken);
+                if (capital is null)
+                    return Result<CashPostResultDto>.Fail("member.gl", "Compte de capital introuvable.");
+                journalLines.Add(new CreateJournalLineRequest
+                {
+                    GlAccountId = capital.Id,
+                    Debit = 0m,
+                    Credit = amount,
+                    Description = shareType == ShareType.Qualification ? "Parts de qualification" : "Parts permanentes"
+                });
+                allocations.Add(new ReceiptAllocationDto(
+                    shareType.ToString(),
+                    share.AccountNo,
+                    shareType == ShareType.Qualification ? "Parts de qualification" : "Parts permanentes",
+                    amount));
+                shareIncrements.Add((share, units, amount, allocations[^1].Label));
+            }
+            else
+            {
+                return Result<CashPostResultDto>.Fail("teller.collect_kind", "Ligne invalide (Épargne, Parts qualification ou Parts permanentes).");
+            }
+        }
+
+        var journal = await _journals.PostAsync(new CreateJournalRequest
+        {
+            Description = $"Encaissement mixte {member.MemberNo}",
+            CurrencyCode = currency,
+            BranchId = till.BranchId,
+            Lines = journalLines
+        }, idempotencyKey, cancellationToken);
+        if (!journal.IsSuccess)
+            return Result<CashPostResultDto>.Fail(journal.ErrorCode!, journal.ErrorMessage!);
+
+        foreach (var entry in _db.ChangeTracker.Entries<SavingsLedgerEntry>().Where(e => e.State == EntityState.Added))
+            entry.Entity.JournalEntryId = journal.Value!.Id;
+        foreach (var (share, units, _, _) in shareIncrements)
+            share.ShareCount += units;
+
+        till.ExpectedCash = MoneyAmount.Normalize(till.ExpectedCash + cash);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Till.MixedCollect",
+            nameof(TillSession),
+            till.Id,
+            new { member.MemberNo, cash, lines = allocations.Count, journal.Value!.JournalNo },
+            tenantId,
+            _currentUser.UserId,
+            cancellationToken: cancellationToken);
+
+        decimal ledger = 0m, available = 0m;
+        if (savingsForReceipt is not null)
+            (ledger, available) = await ComputeBalancesAsync(savingsForReceipt.Id, cancellationToken);
+
+        var receiptAccount = savingsForReceipt;
+        var receipt = new CashReceiptDto(
+            new ReceiptLetterheadDto(Letterhead.Sigle, Letterhead.Line2, Letterhead.Line3, Letterhead.Line4),
+            "collect",
+            "Encaissement mixte",
+            journal.Value!.JournalNo,
+            journal.Value.JournalNo,
+            member.MemberNo,
+            member.FullName,
+            receiptAccount?.AccountNo ?? allocations.FirstOrDefault()?.AccountNo ?? "",
+            "Répartition espèces",
+            cash,
+            currency,
+            ledger,
+            available,
+            _currentUser.Username ?? string.Empty,
+            Letterhead.DefaultBranchName,
+            journal.Value.PostedAtUtc,
+            journal.Value.PostedAtPortAuPrince,
+            allocations);
+
+        return Result<CashPostResultDto>.Ok(new CashPostResultDto(
+            receipt,
+            journal.Value.Id,
+            journal.Value.Lines.Count,
+            ledger,
+            available));
+    }
+
+    private bool IsTermLocked(SavingsAccount account)
+    {
+        if (account.AllowWithdrawBeforeTerm)
+            return false;
+        if (account.MaturesOn is { } matures)
+            return _clock.TodayInPortAuPrince() < matures;
+        return account.Product is { IsTermLike: true } && account.Product.TermDays is > 0
+               && _clock.TodayInPortAuPrince() < DateOnly.FromDateTime(_clock.ToPortAuPrince(account.OpenedAtUtc))
+                   .AddDays(account.Product.TermDays.Value);
     }
 
     private async Task<CashPostResultDto?> ReplayAsync(Guid tenantId, string key, CancellationToken cancellationToken)
@@ -709,7 +966,7 @@ public sealed class TellerService : ITellerService
             account.Member?.MemberNo ?? string.Empty,
             account.Member?.FullName ?? string.Empty,
             account.AccountNo,
-            account.Product?.Name ?? string.Empty,
+            account.Product?.DisplayName ?? account.Product?.Name ?? string.Empty,
             amount,
             account.CurrencyCode,
             ledger,

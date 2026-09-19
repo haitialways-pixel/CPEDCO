@@ -195,6 +195,28 @@ public sealed class MembershipTests
     }
 
     [Fact]
+    public async Task Pay_qualification_from_vault_sets_voting_rights()
+    {
+        using var harness = new MembershipHarness();
+        var created = await harness.Members.CreateAsync(
+            Request("Vote", "Paye", "CIN-PAY", status: MemberStatus.Active, legal: LegalStatus.Societaire, shares: 0));
+        Assert.True(created.IsSuccess, created.ErrorMessage);
+        Assert.False(created.Value!.VotingRights);
+
+        var paid = await harness.Members.PaySharesAsync(
+            created.Value.Id,
+            new PaySharesRequest { ShareType = "Qualification", Units = 1, Source = "Vault" },
+            "pay-qual");
+        Assert.True(paid.IsSuccess, paid.ErrorMessage);
+        Assert.Equal(500m, paid.Value!.Amount);
+        Assert.Equal(1, paid.Value.QualificationShareCount);
+        Assert.True(paid.Value.VotingRights);
+        var journal = await harness.Db.JournalEntries.Include(j => j.Lines).SingleAsync(j => j.Id == paid.Value.JournalId);
+        Assert.Equal(500m, journal.Lines.Single(l => l.GlAccountId == SeedGuids.Gl("1030")).Debit);
+        Assert.Equal(500m, journal.Lines.Single(l => l.GlAccountId == SeedGuids.Gl("3010")).Credit);
+    }
+
+    [Fact]
     public async Task Commissaire_is_read_only()
     {
         using var harness = new MembershipHarness();
@@ -280,6 +302,7 @@ internal sealed class MembershipHarness : IDisposable
         });
         Db.GlAccounts.AddRange(
             Gl("1010", GlAccountType.Asset, NormalBalance.Debit),
+            Gl("1030", GlAccountType.Asset, NormalBalance.Debit),
             Gl("3010", GlAccountType.Equity, NormalBalance.Credit),
             Gl("3011", GlAccountType.Equity, NormalBalance.Credit));
         Db.SaveChanges();

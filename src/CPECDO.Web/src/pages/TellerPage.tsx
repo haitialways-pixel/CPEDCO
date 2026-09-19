@@ -1,12 +1,14 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { fetchMember360, searchMembers, type KycDocument, type MemberSummary } from "../api/members";
+import { useAuth } from "../auth/AuthContext";
+import { fetchMember360, searchMembers, type KycDocument, type Member360, type MemberSummary } from "../api/members";
 import { KycPieces } from "../components/KycPieces";
-import { downloadLivretPdf, fetchMemberSavings, type SavingsAccount } from "../api/savings";
+import { downloadLivretPdf, fetchMemberSavings, openMemberAccount, type SavingsAccount } from "../api/savings";
 import {
   acceptInternalMovement,
   closeTill,
+  collectMixed,
   fetchCurrentTill,
   fetchInternalMovements,
   openTill,
@@ -78,6 +80,12 @@ function printReceipt(receipt: CashReceipt) {
     <tr><td>Membre</td><td>${receipt.memberNo} — ${receipt.memberName}</td></tr>
     <tr><td>Compte</td><td>${receipt.accountNo} (${receipt.productName})</td></tr>
     <tr><td>Montant</td><td>${formatMoney(receipt.amount, receipt.currencyCode)}</td></tr>
+    ${(receipt.allocations ?? [])
+      .map(
+        (a) =>
+          `<tr><td>${a.label}</td><td>${a.accountNo} — ${formatMoney(a.amount, receipt.currencyCode)}</td></tr>`
+      )
+      .join("")}
     <tr><td>Nouveau solde</td><td>${formatMoney(receipt.ledgerBalance, receipt.currencyCode)}</td></tr>
     <tr><td>Disponible</td><td>${formatMoney(receipt.availableBalance, receipt.currencyCode)}</td></tr>
     <tr><td>Caissier</td><td>${receipt.cashierName}</td></tr>
@@ -95,6 +103,9 @@ function printReceipt(receipt: CashReceipt) {
 
 export function TellerPage() {
   const { t } = useTranslation();
+  const { session } = useAuth();
+  const isGerant = session?.roles.some((r) => r.name === "Gerant" || r.name === "Admin") ?? false;
+  const canOpenAccount = session?.roles.some((r) => ["Admin", "Gerant", "OfficierCredit", "ServiceClient"].includes(r.name)) ?? false;
   const [params] = useSearchParams();
   const vue = params.get("vue");
   const [till, setTill] = useState<TillSession | null>(null);
@@ -109,6 +120,12 @@ export function TellerPage() {
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [accountId, setAccountId] = useState("");
   const [amount, setAmount] = useState("");
+  const [overrideNote, setOverrideNote] = useState("");
+  const [, setProfile] = useState<Member360 | null>(null);
+  const [cashReceived, setCashReceived] = useState("");
+  const [lines, setLines] = useState<{ kind: string; savingsAccountId: string; amount: string }[]>([
+    { kind: "Epargne", savingsAccountId: "", amount: "" }
+  ]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [incoming, setIncoming] = useState<InternalCashMovement[]>([]);
@@ -129,7 +146,7 @@ export function TellerPage() {
   }, [t]);
 
   useEffect(() => {
-    const id = vue === "depot" || vue === "retrait" ? "teller-pad" : "teller-till";
+    const id = vue === "depot" || vue === "retrait" || vue === "encaisser" ? "teller-pad" : "teller-till";
     document.getElementById(id)?.scrollIntoView({ block: "start" });
   }, [vue]);
 
@@ -218,12 +235,15 @@ export function TellerPage() {
   async function selectMember(item: MemberSummary) {
     setMember(item);
     setKycDocuments([]);
+    setProfile(null);
     const list = await fetchMemberSavings(item.id);
     setAccounts(list);
     setAccountId(list[0]?.id ?? "");
+    setLines([{ kind: "Epargne", savingsAccountId: list[0]?.id ?? "", amount: "" }]);
     try {
-      const profile = await fetchMember360(item.id);
-      setKycDocuments(profile.kycDocuments ?? []);
+      const loaded = await fetchMember360(item.id);
+      setProfile(loaded);
+      setKycDocuments(loaded.kycDocuments ?? []);
     } catch {
       setKycDocuments([]);
     }
@@ -234,7 +254,7 @@ export function TellerPage() {
     setBusy(true);
     setError(null);
     try {
-      const result = await postCash(kind, accountId, Number(amount));
+      const result = await postCash(kind, accountId, Number(amount), overrideNote.trim() || undefined);
       setAccounts((current) =>
         current.map((a) =>
           a.id === accountId
@@ -244,6 +264,35 @@ export function TellerPage() {
       );
       printReceipt(result.receipt);
       setAmount("");
+      setOverrideNote("");
+      await refreshTill();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("teller.error"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function collect() {
+    if (!member) return;
+    const cash = Number(cashReceived);
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await collectMixed({
+        memberId: member.id,
+        cashReceived: cash,
+        currencyCode: "HTG",
+        lines: lines.map((line) => ({
+          kind: line.kind,
+          savingsAccountId: line.kind === "Epargne" ? line.savingsAccountId || null : null,
+          amount: Number(line.amount)
+        }))
+      });
+      printReceipt(result.receipt);
+      setAccounts(await fetchMemberSavings(member.id));
+      setCashReceived("");
+      setLines([{ kind: "Epargne", savingsAccountId: accounts[0]?.id ?? "", amount: "" }]);
       await refreshTill();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("teller.error"));
@@ -404,7 +453,15 @@ export function TellerPage() {
       </section>
 
       <section className="card-block" id="teller-pad">
-        <h2>{vue === "depot" ? t("nav.deposit") : vue === "retrait" ? t("nav.withdraw") : t("teller.pad")}</h2>
+        <h2>
+          {vue === "depot"
+            ? t("nav.deposit")
+            : vue === "retrait"
+              ? t("nav.withdraw")
+              : vue === "encaisser"
+                ? t("nav.collect")
+                : t("teller.pad")}
+        </h2>
         <form className="search-bar" onSubmit={(e) => void onSearch(e)}>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("members.searchPlaceholder")} />
           <button type="submit" disabled={busy}>
@@ -464,26 +521,122 @@ export function TellerPage() {
             ) : (
               <p className="muted">{t("savings.empty")}</p>
             )}
-            <div className="search-bar" style={{ marginTop: "0.8rem" }}>
-              <input
-                type="number"
-                min={0}
-                step="0.0001"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder={t("teller.amount")}
-              />
-              {vue !== "retrait" ? (
-                <button type="button" disabled={busy || !till || !accountId} onClick={() => void cash("deposit")}>
-                  {t("teller.deposit")}
+            {vue === "encaisser" ? (
+              <div className="stack-form" style={{ marginTop: "0.8rem" }}>
+                <p className="muted">{t("teller.collectCaption")}</p>
+                <label>
+                  {t("teller.cashReceived")}
+                  <input type="number" min={0} step="0.01" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} />
+                </label>
+                {lines.map((line, index) => (
+                  <div key={index} className="search-bar">
+                    <select
+                      value={line.kind}
+                      onChange={(e) => {
+                        const next = [...lines];
+                        next[index] = { ...line, kind: e.target.value };
+                        setLines(next);
+                      }}
+                    >
+                      <option value="Epargne">{t("savings.kindEpargne")}</option>
+                      <option value="Qualification">{t("savings.kindQual")}</option>
+                      <option value="Permanent">{t("savings.kindPerm")}</option>
+                    </select>
+                    {line.kind === "Epargne" ? (
+                      <select
+                        value={line.savingsAccountId}
+                        onChange={(e) => {
+                          const next = [...lines];
+                          next[index] = { ...line, savingsAccountId: e.target.value };
+                          setLines(next);
+                        }}
+                      >
+                        <option value="">{t("savings.empty")}</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.accountNo} — {a.productName}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {line.kind === "Epargne" && !line.savingsAccountId && canOpenAccount ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          if (!member) return;
+                          const productId = accounts[0]?.productId;
+                          setBusy(true);
+                          void openMemberAccount(member.id, "Epargne", productId)
+                            .then(async () => {
+                              const list = await fetchMemberSavings(member.id);
+                              setAccounts(list);
+                              const next = [...lines];
+                              next[index] = { ...line, savingsAccountId: list[0]?.id ?? "" };
+                              setLines(next);
+                            })
+                            .catch((err: unknown) => setError(err instanceof Error ? err.message : t("savings.openError")))
+                            .finally(() => setBusy(false));
+                        }}
+                      >
+                        {t("teller.openAccount")}
+                      </button>
+                    ) : null}
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={line.amount}
+                      onChange={(e) => {
+                        const next = [...lines];
+                        next[index] = { ...line, amount: e.target.value };
+                        setLines(next);
+                      }}
+                      placeholder={t("teller.amount")}
+                    />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setLines([...lines, { kind: "Epargne", savingsAccountId: accountId, amount: "" }])}
+                >
+                  {t("teller.addLine")}
                 </button>
-              ) : null}
-              {vue !== "depot" ? (
-                <button type="button" disabled={busy || !till || !accountId} onClick={() => void cash("withdraw")}>
-                  {t("teller.withdraw")}
+                <button type="button" className="btn-primary" disabled={busy || !till} onClick={() => void collect()}>
+                  {t("teller.collectConfirm")}
                 </button>
-              ) : null}
-            </div>
+              </div>
+            ) : (
+              <div className="search-bar" style={{ marginTop: "0.8rem" }}>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.0001"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder={t("teller.amount")}
+                />
+                {vue === "retrait" && isGerant ? (
+                  <input
+                    value={overrideNote}
+                    onChange={(e) => setOverrideNote(e.target.value)}
+                    placeholder={t("teller.overrideNote")}
+                  />
+                ) : null}
+                {vue !== "retrait" ? (
+                  <button type="button" disabled={busy || !till || !accountId} onClick={() => void cash("deposit")}>
+                    {t("teller.deposit")}
+                  </button>
+                ) : null}
+                {vue !== "depot" ? (
+                  <button type="button" disabled={busy || !till || !accountId} onClick={() => void cash("withdraw")}>
+                    {t("teller.withdraw")}
+                  </button>
+                ) : null}
+              </div>
+            )}
           </>
         ) : null}
       </section>

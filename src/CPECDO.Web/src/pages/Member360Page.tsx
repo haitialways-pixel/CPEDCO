@@ -17,6 +17,7 @@ import {
 import {
   blockAccount,
   downloadStatementPdf,
+  fetchMemberSavings,
   fetchSavingsProducts,
   openSavingsAccount,
   placeHold,
@@ -443,13 +444,10 @@ export function Member360Page() {
                   setOpening(true);
                   setError(null);
                   void openSavingsAccount(id, productId)
-                    .then((created) => {
-                      setAccounts((current) => [...current, created]);
-                      setMember((current) =>
-                        current
-                          ? { ...current, savingsAccounts: [...(current.savingsAccounts ?? []), created] }
-                          : current
-                      );
+                    .then(async () => {
+                      const list = await fetchMemberSavings(id);
+                      setAccounts(list);
+                      setMember((current) => (current ? { ...current, savingsAccounts: list } : current));
                     })
                     .catch((err: unknown) => setError(err instanceof Error ? err.message : t("savings.openError")))
                     .finally(() => setOpening(false));
@@ -458,7 +456,7 @@ export function Member360Page() {
                 <select value={productId} onChange={(e) => setProductId(e.target.value)}>
                   {products.map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.name} ({product.currencyCode})
+                      {product.displayName || product.name} ({product.currencyCode})
                     </option>
                   ))}
                 </select>

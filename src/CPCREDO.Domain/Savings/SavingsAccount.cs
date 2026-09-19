@@ -13,6 +13,8 @@ public class SavingsAccount
     public string AccountNo { get; set; } = string.Empty;
     public string CurrencyCode { get; set; } = Currencies.Htg;
     public decimal MinimumBalance { get; set; }
+    public DateOnly? MaturesOn { get; set; }
+    public bool AllowWithdrawBeforeTerm { get; set; }
     public bool IsActive { get; set; } = true;
     public bool IsBlocked { get; set; }
     public string? BlockedReason { get; set; }

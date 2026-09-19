@@ -188,6 +188,39 @@ export async function convertToSocietaire(id: string): Promise<Member360> {
   return (await response.json()) as Member360;
 }
 
+export async function payShares(
+  id: string,
+  body: { shareType: string; units?: number; amount?: number; source: string }
+): Promise<{
+  memberId: string;
+  shareType: string;
+  unitsPaid: number;
+  amount: number;
+  source: string;
+  journalId: string;
+  qualificationShareCount: number;
+  permanentShareCount: number;
+  votingRights: boolean;
+}> {
+  const response = await apiFetch(`/api/v1/members/${id}/shares/pay`, {
+    method: "POST",
+    headers: { ...headers(), "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as {
+    memberId: string;
+    shareType: string;
+    unitsPaid: number;
+    amount: number;
+    source: string;
+    journalId: string;
+    qualificationShareCount: number;
+    permanentShareCount: number;
+    votingRights: boolean;
+  };
+}
+
 export async function subscribePermanentShares(id: string, quantity: number): Promise<Member360> {
   const response = await apiFetch(`/api/v1/members/${id}/permanent-shares`, {
     method: "POST",

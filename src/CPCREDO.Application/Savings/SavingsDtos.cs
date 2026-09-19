@@ -2,11 +2,54 @@ namespace CPCREDO.Application.Savings;
 
 public sealed record SavingsProductDto(
     Guid Id,
+    string Code,
+    string LegalName,
+    string? CommercialName,
+    string DisplayName,
     string Name,
     string CurrencyCode,
+    string ProductKind,
+    int? TermDays,
+    decimal InterestRatePercent,
+    string InterestMethod,
+    decimal MinOpeningAmount,
     decimal MinimumBalance,
+    bool AllowWithdrawBeforeTerm,
     Guid LiabilityGlAccountId,
     Guid CashGlAccountId,
+    bool IsActive);
+
+public sealed class SaveSavingsProductRequest
+{
+    public string Code { get; set; } = string.Empty;
+    public string LegalName { get; set; } = string.Empty;
+    public string? CommercialName { get; set; }
+    public string CurrencyCode { get; set; } = "HTG";
+    public string ProductKind { get; set; } = "AVue";
+    public int? TermDays { get; set; }
+    public int? TermMonths { get; set; }
+    public decimal InterestRatePercent { get; set; }
+    public string InterestMethod { get; set; } = "None";
+    public decimal MinOpeningAmount { get; set; }
+    public decimal MinimumBalance { get; set; }
+    public bool AllowWithdrawBeforeTerm { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public sealed class OpenMemberAccountRequest
+{
+    public Guid MemberId { get; set; }
+    public string Kind { get; set; } = "Epargne";
+    public Guid? ProductId { get; set; }
+}
+
+public sealed record OpenedAccountDto(
+    string Kind,
+    Guid Id,
+    string AccountNo,
+    string Label,
+    string CurrencyCode,
+    decimal Balance,
     bool IsActive);
 
 public sealed record SavingsHoldDto(
@@ -40,6 +83,9 @@ public sealed record SavingsAccountDto(
     string? BlockedReason,
     DateTime OpenedAtUtc,
     DateTime? LastPassbookPrintAtUtc,
+    DateOnly? MaturesOn,
+    bool AllowWithdrawBeforeTerm,
+    string ProductKind,
     IReadOnlyList<SavingsHoldDto> Holds);
 
 public sealed record LivretLineDto(

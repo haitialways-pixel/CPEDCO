@@ -71,6 +71,18 @@ public sealed class TellerController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpPost("collect")]
+    [Authorize(Policy = "CanTill")]
+    [RequiresIdempotencyKey]
+    public async Task<ActionResult<CashPostResultDto>> Collect(
+        [FromBody] MixedCollectRequest request,
+        CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var result = await _teller.CollectMixedAsync(request, key, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("open")]
     public async Task<ActionResult<IReadOnlyList<OpenTillPeerDto>>> OpenTills(
         [FromQuery] string? currency,

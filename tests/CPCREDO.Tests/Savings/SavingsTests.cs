@@ -1,4 +1,6 @@
 using System.Text;
+using CPCREDO.Application.Savings;
+using CPCREDO.Domain.Accounting;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Identity;
 using CPCREDO.Domain.Members;
@@ -34,6 +36,99 @@ public sealed class SavingsTests
         Assert.Equal(0m, opened.Value!.LedgerBalance);
         Assert.Equal(0m, opened.Value.AvailableBalance);
         Assert.Equal("A-000001", opened.Value.AccountNo);
+        Assert.Equal("AVue", opened.Value.ProductKind);
+    }
+
+    [Fact]
+    public async Task Catalog_creates_product_and_code_is_immutable()
+    {
+        using var harness = new SavingsHarness();
+        harness.Db.GlAccounts.AddRange(
+            new GlAccount
+            {
+                Id = SeedGuids.Gl("1010"),
+                TenantId = SeedGuids.TenantId,
+                Code = "1010",
+                NameFr = "Caisse",
+                NameHt = "Caisse",
+                NameEn = "Cash",
+                AccountType = GlAccountType.Asset,
+                NormalBalance = NormalBalance.Debit,
+                CurrencyCode = Currencies.Htg,
+                IsPostable = true,
+                IsActive = true,
+                CreatedAtUtc = harness.Clock.UtcNow
+            },
+            new GlAccount
+            {
+                Id = SeedGuids.Gl("2010"),
+                TenantId = SeedGuids.TenantId,
+                Code = "2010",
+                NameFr = "Epargne",
+                NameHt = "Epargne",
+                NameEn = "Savings",
+                AccountType = GlAccountType.Liability,
+                NormalBalance = NormalBalance.Credit,
+                CurrencyCode = Currencies.Htg,
+                IsPostable = true,
+                IsActive = true,
+                CreatedAtUtc = harness.Clock.UtcNow
+            });
+        await harness.Db.SaveChangesAsync();
+        var products = new SavingsProductService(harness.Db, harness.User, harness.Clock, new AuditLogger(harness.Db, harness.Clock, harness.User));
+        var created = await products.CreateAsync(new SaveSavingsProductRequest
+        {
+            Code = "EAV-2",
+            LegalName = "Épargne à vue 2",
+            CurrencyCode = "HTG",
+            ProductKind = "AVue"
+        });
+        Assert.True(created.IsSuccess, created.ErrorMessage);
+        Assert.Equal("EAV-2", created.Value!.Code);
+        Assert.Equal("Épargne à vue 2", created.Value.DisplayName);
+
+        var updated = await products.UpdateAsync(created.Value.Id, new SaveSavingsProductRequest
+        {
+            Code = "CHANGED",
+            LegalName = "Nouveau nom",
+            CurrencyCode = "HTG",
+            ProductKind = "AVue",
+            CommercialName = "Livret"
+        });
+        Assert.True(updated.IsSuccess, updated.ErrorMessage);
+        Assert.Equal("EAV-2", updated.Value!.Code);
+        Assert.Equal("Livret", updated.Value.DisplayName);
+    }
+
+    [Fact]
+    public async Task Usager_cannot_open_qualification_share_account()
+    {
+        using var harness = new SavingsHarness();
+        var member = await harness.CreateMemberAsync("Usa", "Ger", "CIN-U-Q");
+        var opened = await harness.Savings.OpenMemberAccountAsync(new OpenMemberAccountRequest
+        {
+            MemberId = member.Id,
+            Kind = "Qualification"
+        });
+        Assert.False(opened.IsSuccess);
+        Assert.Equal("savings.usager_parts", opened.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Auxiliaire_can_open_permanent_share_account_at_zero()
+    {
+        using var harness = new SavingsHarness();
+        var member = await harness.CreateMemberAsync("Aux", "Iliaire", "CIN-A-P");
+        member.LegalStatus = LegalStatus.Auxiliaire;
+        await harness.Db.SaveChangesAsync();
+        var opened = await harness.Savings.OpenMemberAccountAsync(new OpenMemberAccountRequest
+        {
+            MemberId = member.Id,
+            Kind = "Permanent"
+        });
+        Assert.True(opened.IsSuccess, opened.ErrorMessage);
+        Assert.Equal(0m, opened.Value!.Balance);
+        Assert.StartsWith("P-", opened.Value.AccountNo);
     }
 
     [Fact]
@@ -203,8 +298,11 @@ internal sealed class SavingsHarness : IDisposable
             {
                 Id = SeedGuids.SavingsProductHtg,
                 TenantId = SeedGuids.TenantId,
+                Code = "EAV-HTG",
+                LegalName = "Épargne à vue HTG",
                 Name = "Épargne à vue HTG",
                 CurrencyCode = Currencies.Htg,
+                ProductKind = SavingsProductKind.AVue,
                 MinimumBalance = 0m,
                 LiabilityGlAccountId = SeedGuids.Gl("2010"),
                 CashGlAccountId = SeedGuids.Gl("1010"),
@@ -215,8 +313,11 @@ internal sealed class SavingsHarness : IDisposable
             {
                 Id = SeedGuids.SavingsProductUsd,
                 TenantId = SeedGuids.TenantId,
+                Code = "EAV-USD",
+                LegalName = "Épargne à vue USD",
                 Name = "Épargne à vue USD",
                 CurrencyCode = Currencies.Usd,
+                ProductKind = SavingsProductKind.AVue,
                 MinimumBalance = 0m,
                 LiabilityGlAccountId = SeedGuids.Gl("2020"),
                 CashGlAccountId = SeedGuids.Gl("1020"),

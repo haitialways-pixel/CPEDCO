@@ -122,6 +122,7 @@ public static class DependencyInjection
         services.AddSingleton<IKycOverrideStore, KycOverrideStore>();
         services.AddScoped<IKycDocumentService, KycDocumentService>();
         services.AddScoped<ISavingsService, SavingsService>();
+        services.AddScoped<ISavingsProductService, SavingsProductService>();
         services.AddScoped<ITellerService, TellerService>();
         services.AddScoped<ITreasuryService, TreasuryService>();
         services.AddScoped<ILoanProductService, LoanProductService>();

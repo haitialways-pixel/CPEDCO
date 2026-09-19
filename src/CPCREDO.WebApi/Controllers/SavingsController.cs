@@ -27,14 +27,18 @@ public sealed class SavingsController : ControllerBase
 
     [HttpPost("accounts")]
     [Authorize(Policy = "CanCreateMember")]
-    [ProducesResponseType(typeof(SavingsAccountDto), StatusCodes.Status201Created)]
-    public async Task<ActionResult<SavingsAccountDto>> OpenAccount(
-        [FromBody] OpenSavingsAccountRequest request,
+    [ProducesResponseType(typeof(OpenedAccountDto), StatusCodes.Status201Created)]
+    public async Task<ActionResult<OpenedAccountDto>> OpenAccount(
+        [FromBody] OpenMemberAccountRequest request,
         CancellationToken cancellationToken)
     {
-        var result = await _savings.OpenAccountAsync(request.MemberId, request.ProductId, cancellationToken);
+        var result = await _savings.OpenMemberAccountAsync(request, cancellationToken);
         if (result.IsSuccess)
-            return CreatedAtAction(nameof(GetAccount), new { accountId = result.Value!.Id }, result.Value);
+        {
+            if (result.Value!.Kind.Equals("Epargne", StringComparison.OrdinalIgnoreCase))
+                return CreatedAtAction(nameof(GetAccount), new { accountId = result.Value.Id }, result.Value);
+            return StatusCode(StatusCodes.Status201Created, result.Value);
+        }
         return ToActionResult(result);
     }
 
@@ -179,4 +183,4 @@ public sealed class SavingsController : ControllerBase
     }
 }
 
-public sealed record OpenSavingsAccountRequest(Guid MemberId, Guid ProductId);
+

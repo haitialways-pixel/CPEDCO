@@ -256,8 +256,11 @@ internal sealed class LoanHarness : IDisposable
         {
             Id = SeedGuids.SavingsProductHtg,
             TenantId = SeedGuids.TenantId,
+            Code = "EAV-HTG",
+            LegalName = "Épargne à vue HTG",
             Name = "Épargne à vue HTG",
             CurrencyCode = Currencies.Htg,
+            ProductKind = SavingsProductKind.AVue,
             LiabilityGlAccountId = SeedGuids.Gl("2010"),
             CashGlAccountId = SeedGuids.Gl("1010"),
             IsActive = true,

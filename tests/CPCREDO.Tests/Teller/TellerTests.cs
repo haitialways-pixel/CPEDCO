@@ -369,6 +369,204 @@ public sealed class TellerTests
         Assert.False(created.IsSuccess);
         Assert.Equal("internal.amount", created.ErrorCode);
     }
+
+    [Fact]
+    public async Task Terme_withdraw_before_maturity_is_blocked_unless_gerant_note()
+    {
+        using var h = new TellerHarness();
+        await h.OpenTillAsync();
+        var product = new SavingsProduct
+        {
+            Id = Guid.NewGuid(),
+            TenantId = SeedGuids.TenantId,
+            Code = "ETM-HTG",
+            LegalName = "Épargne à terme",
+            Name = "Épargne à terme",
+            CurrencyCode = Currencies.Htg,
+            ProductKind = SavingsProductKind.Terme,
+            TermDays = 90,
+            AllowWithdrawBeforeTerm = false,
+            LiabilityGlAccountId = SeedGuids.Gl("2110"),
+            CashGlAccountId = SeedGuids.Gl("1010"),
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        h.Db.SavingsProducts.Add(product);
+        var member = new Member
+        {
+            Id = Guid.NewGuid(),
+            TenantId = SeedGuids.TenantId,
+            BranchId = SeedGuids.BranchId,
+            MemberNo = "M-TERM",
+            FirstName = "Terme",
+            LastName = "Test",
+            Phone = "1",
+            AddressLine = "x",
+            City = Letterhead.City,
+            Status = MemberStatus.Active,
+            LegalStatus = LegalStatus.Societaire,
+            KycStatus = KycStatus.Verified,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        h.Db.Members.Add(member);
+        await h.Db.SaveChangesAsync();
+        var opened = await h.Savings.OpenAccountAsync(member.Id, product.Id);
+        Assert.True(opened.IsSuccess, opened.ErrorMessage);
+        Assert.NotNull(opened.Value!.MaturesOn);
+        var dep = await h.Teller.DepositAsync(
+            new CashPostRequest { SavingsAccountId = opened.Value.Id, Amount = 1000m },
+            "term-dep");
+        Assert.True(dep.IsSuccess, dep.ErrorMessage);
+
+        h.User.Roles = [RoleNames.Caissier];
+        var blocked = await h.Teller.WithdrawAsync(
+            new CashPostRequest { SavingsAccountId = opened.Value.Id, Amount = 100m },
+            "term-wd");
+        Assert.False(blocked.IsSuccess);
+        Assert.Equal("teller.terme_locked", blocked.ErrorCode);
+
+        h.User.Roles = [RoleNames.Gerant];
+        var still = await h.Teller.WithdrawAsync(
+            new CashPostRequest { SavingsAccountId = opened.Value.Id, Amount = 100m },
+            "term-wd-2");
+        Assert.False(still.IsSuccess);
+
+        var ok = await h.Teller.WithdrawAsync(
+            new CashPostRequest
+            {
+                SavingsAccountId = opened.Value.Id,
+                Amount = 100m,
+                GerantOverrideNote = "Urgence médicale"
+            },
+            "term-wd-ok");
+        Assert.True(ok.IsSuccess, ok.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Mixed_collect_splits_cash_without_putting_parts_on_savings()
+    {
+        using var h = new TellerHarness();
+        await h.OpenTillAsync();
+        var savings = await h.OpenSavingsAsync();
+        var member = await h.Db.Members.Include(m => m.ShareAccounts).SingleAsync(m => m.Id == savings.MemberId);
+        member.LegalStatus = LegalStatus.Societaire;
+        h.Db.ShareAccounts.Add(new ShareAccount
+        {
+            TenantId = SeedGuids.TenantId,
+            MemberId = member.Id,
+            BranchId = SeedGuids.BranchId,
+            AccountNo = "S-000099",
+            ShareType = ShareType.Qualification,
+            ShareCount = 0,
+            ParValue = 500m,
+            CurrencyCode = Currencies.Htg,
+            IsActive = true,
+            OpenedAtUtc = DateTime.UtcNow
+        });
+        await h.Db.SaveChangesAsync();
+
+        var posted = await h.Teller.CollectMixedAsync(
+            new MixedCollectRequest
+            {
+                MemberId = member.Id,
+                CashReceived = 2500m,
+                CurrencyCode = Currencies.Htg,
+                Lines =
+                [
+                    new MixedCollectLineRequest { Kind = "Epargne", SavingsAccountId = savings.Id, Amount = 1000m },
+                    new MixedCollectLineRequest { Kind = "Qualification", Amount = 1500m }
+                ]
+            },
+            "mix-2500");
+
+        Assert.True(posted.IsSuccess, posted.ErrorMessage);
+        Assert.Equal(3, posted.Value!.JournalLineCount);
+        Assert.Equal(1000m, posted.Value.LedgerBalance);
+        Assert.Equal(2, posted.Value.Receipt.Allocations!.Count);
+        var journal = await h.Db.JournalEntries.Include(j => j.Lines).SingleAsync(j => j.Id == posted.Value.JournalId);
+        Assert.Equal(2500m, journal.Lines.Single(l => l.GlAccountId == SeedGuids.Gl("1010")).Debit);
+        Assert.Equal(1000m, journal.Lines.Single(l => l.GlAccountId == SeedGuids.Gl("2010")).Credit);
+        Assert.Equal(1500m, journal.Lines.Single(l => l.GlAccountId == SeedGuids.Gl("3010")).Credit);
+        var share = await h.Db.ShareAccounts.SingleAsync(s => s.MemberId == member.Id && s.ShareType == ShareType.Qualification);
+        Assert.Equal(3, share.ShareCount);
+    }
+
+    [Fact]
+    public async Task Mixed_collect_refuses_usager_qualification_and_unbalanced()
+    {
+        using var h = new TellerHarness();
+        await h.OpenTillAsync();
+        var savings = await h.OpenSavingsAsync();
+        var unbalanced = await h.Teller.CollectMixedAsync(
+            new MixedCollectRequest
+            {
+                MemberId = savings.MemberId,
+                CashReceived = 2500m,
+                Lines =
+                [
+                    new MixedCollectLineRequest { Kind = "Epargne", SavingsAccountId = savings.Id, Amount = 1000m }
+                ]
+            },
+            "mix-unbal");
+        Assert.False(unbalanced.IsSuccess);
+        Assert.Equal("teller.collect_unbalanced", unbalanced.ErrorCode);
+
+        var usager = await h.Teller.CollectMixedAsync(
+            new MixedCollectRequest
+            {
+                MemberId = savings.MemberId,
+                CashReceived = 500m,
+                Lines =
+                [
+                    new MixedCollectLineRequest { Kind = "Qualification", Amount = 500m }
+                ]
+            },
+            "mix-usager");
+        Assert.False(usager.IsSuccess);
+        Assert.Equal("savings.usager_parts", usager.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Usager_cannot_open_terme_account()
+    {
+        using var h = new TellerHarness();
+        var product = new SavingsProduct
+        {
+            Id = Guid.NewGuid(),
+            TenantId = SeedGuids.TenantId,
+            Code = "ETM-U",
+            LegalName = "Terme",
+            Name = "Terme",
+            CurrencyCode = Currencies.Htg,
+            ProductKind = SavingsProductKind.Terme,
+            TermDays = 30,
+            LiabilityGlAccountId = SeedGuids.Gl("2110"),
+            CashGlAccountId = SeedGuids.Gl("1010"),
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        h.Db.SavingsProducts.Add(product);
+        var member = new Member
+        {
+            Id = Guid.NewGuid(),
+            TenantId = SeedGuids.TenantId,
+            BranchId = SeedGuids.BranchId,
+            MemberNo = "M-USG",
+            FirstName = "U",
+            LastName = "Sager",
+            Phone = "1",
+            AddressLine = "x",
+            City = Letterhead.City,
+            Status = MemberStatus.Active,
+            LegalStatus = LegalStatus.Usager,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        h.Db.Members.Add(member);
+        await h.Db.SaveChangesAsync();
+        var opened = await h.Savings.OpenAccountAsync(member.Id, product.Id);
+        Assert.False(opened.IsSuccess);
+        Assert.Equal("savings.usager_terme", opened.ErrorCode);
+    }
 }
 
 internal sealed class TellerHarness : IDisposable
@@ -433,15 +631,20 @@ internal sealed class TellerHarness : IDisposable
             Gl("1010", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg),
             Gl("1030", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg),
             Gl("2010", GlAccountType.Liability, NormalBalance.Credit, Currencies.Htg),
+            Gl("2110", GlAccountType.Liability, NormalBalance.Credit, Currencies.Htg),
             Gl("3010", GlAccountType.Equity, NormalBalance.Credit, Currencies.Htg),
             Gl("4040", GlAccountType.Income, NormalBalance.Credit, Currencies.Htg),
             Gl("5050", GlAccountType.Expense, NormalBalance.Debit, Currencies.Htg));
+        Db.GlAccounts.Add(Gl("3011", GlAccountType.Equity, NormalBalance.Credit, Currencies.Htg));
         Db.SavingsProducts.Add(new SavingsProduct
         {
             Id = SeedGuids.SavingsProductHtg,
             TenantId = SeedGuids.TenantId,
+            Code = "EAV-HTG",
+            LegalName = "Épargne à vue",
             Name = "Épargne à vue HTG",
             CurrencyCode = Currencies.Htg,
+            ProductKind = SavingsProductKind.AVue,
             LiabilityGlAccountId = SeedGuids.Gl("2010"),
             CashGlAccountId = SeedGuids.Gl("1010"),
             IsActive = true,

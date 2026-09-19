@@ -262,14 +262,13 @@ public sealed class DataSeeder
     private static async Task EnsureSavingsProductsAsync(CpcredoDbContext db, ILogger logger, CancellationToken cancellationToken)
     {
         var existing = await db.SavingsProducts.AsNoTracking().Where(x => x.TenantId == SeedGuids.TenantId).ToListAsync(cancellationToken);
-        if (existing.Count >= 2)
+        if (existing.Count > 0)
             return;
 
         var now = SeedInstant;
-        var products = CreateSavingsProducts(SeedGuids.TenantId, now);
-        db.SavingsProducts.AddRange(products.Where(x => existing.All(e => e.Id != x.Id && e.Name != x.Name)));
+        db.SavingsProducts.AddRange(CreateSavingsProducts(SeedGuids.TenantId, now));
         await db.SaveChangesAsync(cancellationToken);
-        logger.LogInformation("Seeded savings products for CPCREDO tenant.");
+        logger.LogInformation("Seeded savings product EAV-HTG for CPCREDO tenant.");
     }
 
 
@@ -421,23 +420,17 @@ public sealed class DataSeeder
             {
                 Id = SeedGuids.SavingsProductHtg,
                 TenantId = tenantId,
-                Name = "Épargne à vue HTG",
+                Code = "EAV-HTG",
+                LegalName = "Épargne à vue",
+                CommercialName = null,
+                Name = "Épargne à vue",
                 CurrencyCode = Currencies.Htg,
+                ProductKind = SavingsProductKind.AVue,
+                InterestMethod = SavingsInterestMethod.None,
                 MinimumBalance = 0m,
+                MinOpeningAmount = 0m,
                 LiabilityGlAccountId = SeedGuids.Gl("2010"),
                 CashGlAccountId = SeedGuids.Gl("1010"),
-                IsActive = true,
-                CreatedAtUtc = now
-            },
-            new SavingsProduct
-            {
-                Id = SeedGuids.SavingsProductUsd,
-                TenantId = tenantId,
-                Name = "Épargne à vue USD",
-                CurrencyCode = Currencies.Usd,
-                MinimumBalance = 0m,
-                LiabilityGlAccountId = SeedGuids.Gl("2020"),
-                CashGlAccountId = SeedGuids.Gl("1020"),
                 IsActive = true,
                 CreatedAtUtc = now
             }

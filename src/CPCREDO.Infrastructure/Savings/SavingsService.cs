@@ -37,18 +37,43 @@ public sealed class SavingsService : ISavingsService
         var products = await _db.SavingsProducts
             .AsNoTracking()
             .Where(x => x.TenantId == _currentUser.TenantId && x.IsActive)
-            .OrderBy(x => x.Name)
-            .Select(x => new SavingsProductDto(
-                x.Id,
-                x.Name,
-                x.CurrencyCode,
-                x.MinimumBalance,
-                x.LiabilityGlAccountId,
-                x.CashGlAccountId,
-                x.IsActive))
+            .OrderBy(x => x.LegalName)
+            .ThenBy(x => x.Name)
             .ToListAsync(cancellationToken);
 
-        return Result<IReadOnlyList<SavingsProductDto>>.Ok(products);
+        return Result<IReadOnlyList<SavingsProductDto>>.Ok(products.Select(SavingsProductService.Map).ToList());
+    }
+
+    public async Task<Result<OpenedAccountDto>> OpenMemberAccountAsync(
+        OpenMemberAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var kind = (request.Kind ?? "Epargne").Trim();
+        if (kind.Equals("Epargne", StringComparison.OrdinalIgnoreCase))
+        {
+            if (request.ProductId is null || request.ProductId == Guid.Empty)
+                return Result<OpenedAccountDto>.Fail("savings.product.required", "Choisissez un produit d’épargne.");
+            var opened = await OpenAccountAsync(request.MemberId, request.ProductId.Value, cancellationToken);
+            if (!opened.IsSuccess)
+                return Result<OpenedAccountDto>.Fail(opened.ErrorCode!, opened.ErrorMessage!);
+            var a = opened.Value!;
+            return Result<OpenedAccountDto>.Ok(new OpenedAccountDto(
+                "Epargne", a.Id, a.AccountNo, a.ProductName, a.CurrencyCode, a.LedgerBalance, a.IsActive));
+        }
+
+        if (kind.Equals("Qualification", StringComparison.OrdinalIgnoreCase)
+            || kind.Equals("Permanent", StringComparison.OrdinalIgnoreCase)
+            || kind.Equals("Parts qualification", StringComparison.OrdinalIgnoreCase)
+            || kind.Equals("Parts permanentes", StringComparison.OrdinalIgnoreCase))
+        {
+            var shareType = kind.StartsWith("Perm", StringComparison.OrdinalIgnoreCase)
+                || kind.Contains("perman", StringComparison.OrdinalIgnoreCase)
+                ? ShareType.Permanent
+                : ShareType.Qualification;
+            return await OpenShareAccountAsync(request.MemberId, shareType, cancellationToken);
+        }
+
+        return Result<OpenedAccountDto>.Fail("savings.kind", "Type de compte invalide (Epargne, Parts qualification, Parts permanentes).");
     }
 
     public async Task<Result<SavingsAccountDto>> OpenAccountAsync(
@@ -75,6 +100,10 @@ public sealed class SavingsService : ISavingsService
             .FirstOrDefaultAsync(x => x.Id == productId && x.TenantId == tenantId && x.IsActive, cancellationToken);
         if (product is null)
             return Result<SavingsAccountDto>.Fail("savings.product.not_found", "Produit d’épargne introuvable.");
+        if (member.LegalStatus == LegalStatus.Usager && product.IsTermLike)
+            return Result<SavingsAccountDto>.Fail(
+                "savings.usager_terme",
+                "Un usager ne peut ouvrir qu’une épargne à vue.");
 
         var exists = await _db.SavingsAccounts.AnyAsync(
             x => x.TenantId == tenantId && x.MemberId == memberId && x.ProductId == productId && x.IsActive,
@@ -92,6 +121,10 @@ public sealed class SavingsService : ISavingsService
             AccountNo = await NextAccountNoAsync(tenantId, cancellationToken),
             CurrencyCode = product.CurrencyCode,
             MinimumBalance = product.MinimumBalance,
+            MaturesOn = product.IsTermLike && product.TermDays is > 0
+                ? _clock.TodayInPortAuPrince().AddDays(product.TermDays.Value)
+                : null,
+            AllowWithdrawBeforeTerm = product.AllowWithdrawBeforeTerm,
             IsActive = true,
             OpenedAtUtc = _clock.UtcNow
         };
@@ -108,7 +141,117 @@ public sealed class SavingsService : ISavingsService
             _currentUser.UserId,
             cancellationToken: cancellationToken);
 
-        return Result<SavingsAccountDto>.Ok(MapAccount(account, product.Name, 0m, 0m, []));
+        return Result<SavingsAccountDto>.Ok(MapAccount(account, product.DisplayName, product.ProductKind.ToString(), 0m, 0m, []));
+    }
+
+    private async Task<Result<OpenedAccountDto>> OpenShareAccountAsync(
+        Guid memberId,
+        ShareType shareType,
+        CancellationToken cancellationToken)
+    {
+        var gate = RequireWriter();
+        if (!gate.IsSuccess)
+            return Result<OpenedAccountDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
+
+        var tenantId = _currentUser.TenantId!.Value;
+        var member = await _db.Members
+            .Include(m => m.ShareAccounts)
+            .FirstOrDefaultAsync(x => x.Id == memberId && x.TenantId == tenantId, cancellationToken);
+        if (member is null)
+            return Result<OpenedAccountDto>.Fail("savings.member.not_found", "Membre introuvable.");
+        if (member.Status != MemberStatus.Active)
+            return Result<OpenedAccountDto>.Fail("savings.member.inactive", "Seuls les membres actifs peuvent ouvrir un compte.");
+        if (MembershipRules.ServicesBlocked(member, _clock.UtcNow))
+            return Result<OpenedAccountDto>.Fail("member.usager_expired", "Période d’usage échue : conversion en sociétaire requise avant tout service.");
+
+        if (shareType == ShareType.Qualification)
+        {
+            if (member.LegalStatus == LegalStatus.Usager)
+                return Result<OpenedAccountDto>.Fail(
+                    "savings.usager_parts",
+                    "Un usager n’ouvre pas de parts de qualification hors conversion.");
+            if (member.LegalStatus == LegalStatus.Auxiliaire)
+                return Result<OpenedAccountDto>.Fail(
+                    "savings.auxiliaire_parts",
+                    "Un auxiliaire n’ouvre pas de parts de qualification.");
+        }
+
+        if (shareType == ShareType.Permanent)
+        {
+            if (member.LegalStatus == LegalStatus.Usager)
+                return Result<OpenedAccountDto>.Fail(
+                    "savings.usager_permanent",
+                    "Un usager ne peut pas ouvrir de parts permanentes.");
+            if (member.LegalStatus != LegalStatus.Societaire && member.LegalStatus != LegalStatus.Auxiliaire)
+                return Result<OpenedAccountDto>.Fail(
+                    "savings.permanent_status",
+                    "Seuls les sociétaires et les auxiliaires ouvrent des parts permanentes.");
+        }
+
+        var existing = member.ShareAccounts.FirstOrDefault(s => s.ShareType == shareType);
+        if (existing is not null)
+        {
+            return Result<OpenedAccountDto>.Ok(new OpenedAccountDto(
+                shareType.ToString(),
+                existing.Id,
+                existing.AccountNo,
+                shareType == ShareType.Qualification ? "Parts de qualification" : "Parts permanentes",
+                existing.CurrencyCode,
+                existing.BookValue,
+                existing.IsActive));
+        }
+
+        var par = await _db.Tenants.AsNoTracking()
+            .Where(t => t.Id == tenantId)
+            .Select(t => t.ShareParValue)
+            .FirstOrDefaultAsync(cancellationToken);
+        par = MembershipRules.NormalizeParValue(par);
+        var prefix = shareType == ShareType.Permanent
+            ? MembershipRules.PermanentShareAccountNoPrefix
+            : MembershipRules.ShareAccountNoPrefix;
+        var key = shareType == ShareType.Permanent ? "PermanentShareAccountNo" : "ShareAccountNo";
+        var sequence = await _db.NumberSequences
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Key == key, cancellationToken);
+        if (sequence is null)
+        {
+            sequence = new NumberSequence { Id = Guid.NewGuid(), TenantId = tenantId, Key = key, LastValue = 0 };
+            _db.NumberSequences.Add(sequence);
+        }
+
+        sequence.LastValue += 1;
+        var account = new ShareAccount
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            MemberId = member.Id,
+            BranchId = member.BranchId,
+            AccountNo = $"{prefix}{sequence.LastValue:000000}",
+            ShareType = shareType,
+            ShareCount = 0,
+            ParValue = par,
+            CurrencyCode = Currencies.Htg,
+            IsActive = true,
+            OpenedAtUtc = _clock.UtcNow
+        };
+        _db.ShareAccounts.Add(account);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Member.ShareAccountOpened",
+            nameof(ShareAccount),
+            account.Id,
+            new { memberId, shareType = shareType.ToString(), account.AccountNo },
+            tenantId,
+            _currentUser.UserId,
+            cancellationToken: cancellationToken);
+
+        return Result<OpenedAccountDto>.Ok(new OpenedAccountDto(
+            shareType.ToString(),
+            account.Id,
+            account.AccountNo,
+            shareType == ShareType.Qualification ? "Parts de qualification" : "Parts permanentes",
+            account.CurrencyCode,
+            0m,
+            true));
     }
 
     public async Task<Result<SavingsAccountDto>> GetAccountAsync(Guid accountId, CancellationToken cancellationToken = default)
@@ -126,7 +269,13 @@ public sealed class SavingsService : ISavingsService
 
         var (ledger, available) = await ComputeBalancesAsync(account.Id, cancellationToken);
         var holds = await ListActiveHoldsAsync(account.Id, cancellationToken);
-        return Result<SavingsAccountDto>.Ok(MapAccount(account, account.Product?.Name ?? string.Empty, ledger, available, holds));
+        return Result<SavingsAccountDto>.Ok(MapAccount(
+            account,
+            account.Product?.DisplayName ?? string.Empty,
+            account.Product?.ProductKind.ToString() ?? "AVue",
+            ledger,
+            available,
+            holds));
     }
 
     public async Task<Result<IReadOnlyList<SavingsAccountDto>>> ListMemberAccountsAsync(
@@ -149,7 +298,13 @@ public sealed class SavingsService : ISavingsService
         {
             var (ledger, available) = await ComputeBalancesAsync(account.Id, cancellationToken);
             var holds = await ListActiveHoldsAsync(account.Id, cancellationToken);
-            result.Add(MapAccount(account, account.Product?.Name ?? string.Empty, ledger, available, holds));
+            result.Add(MapAccount(
+                account,
+                account.Product?.DisplayName ?? string.Empty,
+                account.Product?.ProductKind.ToString() ?? "AVue",
+                ledger,
+                available,
+                holds));
         }
 
         return Result<IReadOnlyList<SavingsAccountDto>>.Ok(result);
@@ -568,6 +723,7 @@ public sealed class SavingsService : ISavingsService
     private static SavingsAccountDto MapAccount(
         SavingsAccount account,
         string productName,
+        string productKind,
         decimal ledger,
         decimal available,
         IReadOnlyList<SavingsHoldDto> holds) =>
@@ -585,5 +741,8 @@ public sealed class SavingsService : ISavingsService
             account.BlockedReason,
             account.OpenedAtUtc,
             account.LastPassbookPrintAtUtc,
+            account.MaturesOn,
+            account.AllowWithdrawBeforeTerm,
+            productKind,
             holds);
 }

@@ -68,6 +68,7 @@ export type CashReceipt = {
   cashierName: string;
   branchName: string;
   postedAtPortAuPrince: string;
+  allocations?: { kind: string; accountNo: string; label: string; amount: number }[] | null;
 };
 
 export type CashPostResult = {
@@ -159,12 +160,28 @@ export async function acceptInternalMovement(id: string): Promise<InternalCashMo
 export async function postCash(
   kind: "deposit" | "withdraw",
   savingsAccountId: string,
-  amount: number
+  amount: number,
+  gerantOverrideNote?: string
 ): Promise<CashPostResult> {
   const response = await apiFetch(`/api/v1/tills/${kind}`, {
     method: "POST",
     headers: headers(crypto.randomUUID()),
-    body: JSON.stringify({ savingsAccountId, amount })
+    body: JSON.stringify({ savingsAccountId, amount, gerantOverrideNote: gerantOverrideNote || null })
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as CashPostResult;
+}
+
+export async function collectMixed(body: {
+  memberId: string;
+  cashReceived: number;
+  currencyCode: string;
+  lines: { kind: string; savingsAccountId?: string | null; amount: number }[];
+}): Promise<CashPostResult> {
+  const response = await apiFetch("/api/v1/tills/collect", {
+    method: "POST",
+    headers: headers(crypto.randomUUID()),
+    body: JSON.stringify(body)
   });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as CashPostResult;

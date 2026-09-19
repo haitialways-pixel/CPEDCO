@@ -5,6 +5,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MemberCreatePage } from "./pages/MemberCreatePage";
 import { MembersRegisterPage } from "./pages/MembersRegisterPage";
+import { SavingsProductsPage } from "./pages/SavingsProductsPage";
 import { ServiceClientPage } from "./pages/ServiceClientPage";
 import { SavingsStatementPage } from "./pages/SavingsStatementPage";
 import { TellerPage } from "./pages/TellerPage";
@@ -96,6 +97,14 @@ export function App() {
         element={
           <Protected>
             <MembersRegisterPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/epargne/produits"
+        element={
+          <Protected>
+            <SavingsProductsPage />
           </Protected>
         }
       />

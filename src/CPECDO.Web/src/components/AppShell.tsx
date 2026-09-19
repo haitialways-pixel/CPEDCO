@@ -61,6 +61,11 @@ const NAV: NavGroup[] = [
         isActive: (pathname, search) => pathname === "/teller" && q(search, "vue") === "retrait"
       },
       {
+        to: "/teller?vue=encaisser",
+        labelKey: "nav.collect",
+        isActive: (pathname, search) => pathname === "/teller" && q(search, "vue") === "encaisser"
+      },
+      {
         to: "/caisse/decaissement-credit",
         labelKey: "nav.disburse",
         roles: ["Caissier"],
@@ -83,8 +88,20 @@ const NAV: NavGroup[] = [
   {
     id: "membres",
     labelKey: "nav.members",
-    to: "/membres",
-    roles: ["Admin", "Gerant", "OfficierCredit"]
+    roles: ["Admin", "Gerant", "OfficierCredit"],
+    children: [
+      {
+        to: "/membres",
+        labelKey: "nav.membersRegister",
+        isActive: (pathname) => pathname === "/membres" || pathname.startsWith("/membres/")
+      },
+      {
+        to: "/epargne/produits",
+        labelKey: "nav.savingsProducts",
+        roles: ["Admin", "Gerant"],
+        isActive: (pathname) => pathname === "/epargne/produits"
+      }
+    ]
   },
   {
     id: "service",

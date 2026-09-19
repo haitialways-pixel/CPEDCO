@@ -24,6 +24,11 @@ public interface ITellerService
         string? idempotencyKey,
         CancellationToken cancellationToken = default);
 
+    Task<Result<CashPostResultDto>> CollectMixedAsync(
+        MixedCollectRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
+
     Task<Result<IReadOnlyList<OpenTillPeerDto>>> ListOpenTillsAsync(
         string? currencyCode,
         CancellationToken cancellationToken = default);

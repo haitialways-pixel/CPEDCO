@@ -2,11 +2,47 @@ import { getToken, parseError, apiFetch } from "./client";
 
 export type SavingsProduct = {
   id: string;
+  code: string;
+  legalName: string;
+  commercialName: string | null;
+  displayName: string;
   name: string;
   currencyCode: string;
+  productKind: string;
+  termDays: number | null;
+  interestRatePercent: number;
+  interestMethod: string;
+  minOpeningAmount: number;
   minimumBalance: number;
+  allowWithdrawBeforeTerm: boolean;
   liabilityGlAccountId: string;
   cashGlAccountId: string;
+  isActive: boolean;
+};
+
+export type SaveSavingsProduct = {
+  code: string;
+  legalName: string;
+  commercialName?: string | null;
+  currencyCode: string;
+  productKind: string;
+  termDays?: number | null;
+  termMonths?: number | null;
+  interestRatePercent: number;
+  interestMethod: string;
+  minOpeningAmount: number;
+  minimumBalance: number;
+  allowWithdrawBeforeTerm: boolean;
+  isActive: boolean;
+};
+
+export type OpenedAccount = {
+  kind: string;
+  id: string;
+  accountNo: string;
+  label: string;
+  currencyCode: string;
+  balance: number;
   isActive: boolean;
 };
 
@@ -24,6 +60,9 @@ export type SavingsAccount = {
   blockedReason: string | null;
   openedAtUtc: string;
   lastPassbookPrintAtUtc: string | null;
+  maturesOn: string | null;
+  allowWithdrawBeforeTerm: boolean;
+  productKind: string;
   holds: SavingsHold[];
 };
 
@@ -75,14 +114,58 @@ export async function fetchMemberSavings(memberId: string): Promise<SavingsAccou
   return (await response.json()) as SavingsAccount[];
 }
 
-export async function openSavingsAccount(memberId: string, productId: string): Promise<SavingsAccount> {
+export async function openMemberAccount(
+  memberId: string,
+  kind: string,
+  productId?: string
+): Promise<OpenedAccount> {
   const response = await apiFetch("/api/v1/savings/accounts", {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ memberId, productId })
+    body: JSON.stringify({ memberId, kind, productId: productId || null })
   });
   if (!response.ok) throw new Error(await parseError(response));
-  return (await response.json()) as SavingsAccount;
+  return (await response.json()) as OpenedAccount;
+}
+
+export async function openSavingsAccount(memberId: string, productId: string): Promise<OpenedAccount> {
+  return openMemberAccount(memberId, "Epargne", productId);
+}
+
+export async function fetchSavingsProductCatalog(activeOnly = false): Promise<SavingsProduct[]> {
+  const qs = activeOnly ? "?activeOnly=true" : "";
+  const response = await apiFetch(`/api/v1/savings-products${qs}`, { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as SavingsProduct[];
+}
+
+export async function createSavingsProduct(body: SaveSavingsProduct): Promise<SavingsProduct> {
+  const response = await apiFetch("/api/v1/savings-products", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as SavingsProduct;
+}
+
+export async function updateSavingsProduct(id: string, body: SaveSavingsProduct): Promise<SavingsProduct> {
+  const response = await apiFetch(`/api/v1/savings-products/${id}`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as SavingsProduct;
+}
+
+export async function deactivateSavingsProduct(id: string): Promise<SavingsProduct> {
+  const response = await apiFetch(`/api/v1/savings-products/${id}/deactivate`, {
+    method: "POST",
+    headers: headers()
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as SavingsProduct;
 }
 
 export async function fetchSavingsAccount(accountId: string): Promise<SavingsAccount> {

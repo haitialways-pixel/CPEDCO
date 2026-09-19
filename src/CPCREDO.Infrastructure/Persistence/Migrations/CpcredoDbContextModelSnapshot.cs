@@ -933,6 +933,10 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("account_no");
 
+                    b.Property<bool>("AllowWithdrawBeforeTerm")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_withdraw_before_term");
+
                     b.Property<DateTime?>("BlockedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("blocked_at_utc");
@@ -963,6 +967,10 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsBlocked")
                         .HasColumnType("boolean")
                         .HasColumnName("is_blocked");
+
+                    b.Property<DateOnly?>("MaturesOn")
+                        .HasColumnType("date")
+                        .HasColumnName("matures_on");
 
                     b.Property<Guid>("MemberId")
                         .HasColumnType("uuid")
@@ -1138,9 +1146,24 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<bool>("AllowWithdrawBeforeTerm")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_withdraw_before_term");
+
                     b.Property<Guid>("CashGlAccountId")
                         .HasColumnType("uuid")
                         .HasColumnName("cash_gl_account_id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("CommercialName")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("commercial_name");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -1152,9 +1175,26 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(3)")
                         .HasColumnName("currency_code");
 
+                    b.Property<decimal>("InterestRatePercent")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("interest_rate_percent");
+
+                    b.Property<string>("InterestMethod")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("interest_method");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
+
+                    b.Property<string>("LegalName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("legal_name");
 
                     b.Property<Guid>("LiabilityGlAccountId")
                         .HasColumnType("uuid")
@@ -1165,15 +1205,34 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(19,4)")
                         .HasColumnName("minimum_balance");
 
+                    b.Property<decimal>("MinOpeningAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("min_opening_amount");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)")
                         .HasColumnName("name");
 
+                    b.Property<string>("ProductKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("product_kind");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<int?>("TermDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("term_days");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
 
                     b.HasKey("Id")
                         .HasName("pk_savings_products");
@@ -1183,6 +1242,10 @@ namespace CPCREDO.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("LiabilityGlAccountId")
                         .HasDatabaseName("ix_savings_products_liability_gl_account_id");
+
+                    b.HasIndex("TenantId", "Code")
+                        .IsUnique()
+                        .HasDatabaseName("ix_savings_products_tenant_id_code");
 
                     b.HasIndex("TenantId", "Name")
                         .IsUnique()

@@ -114,6 +114,20 @@ public sealed class MembersController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpPost("{id:guid}/shares/pay")]
+    [Authorize(Policy = "CanEditMember")]
+    [RequiresIdempotencyKey]
+    [ProducesResponseType(typeof(PaySharesResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PaySharesResultDto>> PayShares(
+        Guid id,
+        [FromBody] PaySharesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var result = await _members.PaySharesAsync(id, request, key, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpPost("{id:guid}/tickets")]
     [Authorize(Policy = "CanTickets")]
     [ProducesResponseType(typeof(MemberTicketDto), StatusCodes.Status200OK)]

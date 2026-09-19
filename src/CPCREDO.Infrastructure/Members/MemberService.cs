@@ -7,6 +7,7 @@ using CPCREDO.Domain.Identity;
 using CPCREDO.Domain.Loans;
 using CPCREDO.Domain.Members;
 using CPCREDO.Domain.Savings;
+using CPCREDO.Domain.Teller;
 using CPCREDO.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -418,6 +419,179 @@ public sealed class MemberService : IMemberService
             cancellationToken: cancellationToken);
 
         return await Get360Async(member.Id, cancellationToken);
+    }
+
+    public async Task<Result<PaySharesResultDto>> PaySharesAsync(
+        Guid id,
+        PaySharesRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = RequireWriter();
+        if (!gate.IsSuccess)
+            return Result<PaySharesResultDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
+
+        if (!Enum.TryParse<ShareType>(request.ShareType, true, out var shareType))
+            return Result<PaySharesResultDto>.Fail("member.share_type", "Type de parts invalide (Qualification ou Permanent).");
+        var source = (request.Source ?? "Till").Trim();
+        if (!source.Equals("Till", StringComparison.OrdinalIgnoreCase)
+            && !source.Equals("Vault", StringComparison.OrdinalIgnoreCase)
+            && !source.Equals("Coffre", StringComparison.OrdinalIgnoreCase))
+            return Result<PaySharesResultDto>.Fail("member.share_source", "Source invalide (Caisse ou Coffre).");
+        var useVault = source.Equals("Vault", StringComparison.OrdinalIgnoreCase)
+                       || source.Equals("Coffre", StringComparison.OrdinalIgnoreCase);
+
+        var tenantId = _currentUser.TenantId!.Value;
+        var member = await LoadAsync(id, tenantId, cancellationToken);
+        if (member is null)
+            return Result<PaySharesResultDto>.Fail("member.not_found", "Membre introuvable.");
+        if (MembershipRules.ServicesBlocked(member, _clock.UtcNow))
+            return Result<PaySharesResultDto>.Fail("member.usager_expired", "Période d’usage échue : conversion en sociétaire requise.");
+        if (shareType == ShareType.Qualification && member.LegalStatus == LegalStatus.Usager)
+            return Result<PaySharesResultDto>.Fail(
+                "savings.usager_parts",
+                "Un usager ne peut pas payer de parts de qualification hors conversion.");
+        if (shareType == ShareType.Permanent && member.LegalStatus == LegalStatus.Usager)
+            return Result<PaySharesResultDto>.Fail(
+                "savings.usager_permanent",
+                "Un usager ne peut pas payer de parts permanentes.");
+        if (shareType == ShareType.Permanent
+            && member.LegalStatus != LegalStatus.Societaire
+            && member.LegalStatus != LegalStatus.Auxiliaire)
+            return Result<PaySharesResultDto>.Fail(
+                "member.not_societaire",
+                "Seuls les sociétaires et les auxiliaires paient des parts permanentes.");
+        if (shareType == ShareType.Qualification && member.LegalStatus == LegalStatus.Auxiliaire)
+            return Result<PaySharesResultDto>.Fail(
+                "savings.auxiliaire_parts",
+                "Un auxiliaire n’ouvre pas de parts de qualification.");
+
+        var share = member.ShareAccounts.FirstOrDefault(s => s.ShareType == shareType && s.IsActive);
+        if (share is null)
+            return Result<PaySharesResultDto>.Fail(
+                "savings.account.required",
+                "Ouvrez d’abord le compte de parts correspondant.");
+
+        var par = MembershipRules.NormalizeParValue(share.ParValue);
+        if (par > MembershipRules.MaxShareParValue)
+            par = MembershipRules.MaxShareParValue;
+
+        int units;
+        decimal amount;
+        if (request.Units is > 0)
+        {
+            units = request.Units.Value;
+            amount = MembershipRules.BookValue(units, par);
+        }
+        else if (request.Amount is > 0m)
+        {
+            amount = MoneyAmount.Normalize(request.Amount.Value);
+            if (amount % par != 0m)
+                return Result<PaySharesResultDto>.Fail(
+                    "teller.share_par",
+                    $"Le montant des parts doit être un multiple de la valeur nominale ({MoneyDisplay.Format(par, Currencies.Htg)}).");
+            units = (int)(amount / par);
+        }
+        else
+        {
+            return Result<PaySharesResultDto>.Fail("teller.share_units", "Indiquez un nombre de parts ou un montant.");
+        }
+
+        if (units < 1)
+            return Result<PaySharesResultDto>.Fail("teller.share_units", "Payez au moins une part.");
+
+        Guid debitGl;
+        if (useVault)
+        {
+            var vault = await _db.GlAccounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.TenantId == tenantId && a.Code == "1030", cancellationToken);
+            if (vault is null)
+                return Result<PaySharesResultDto>.Fail("member.gl", "Compte coffre introuvable.");
+            debitGl = vault.Id;
+        }
+        else
+        {
+            var till = await _db.TillSessions.FirstOrDefaultAsync(
+                t => t.TenantId == tenantId
+                     && t.UserId == _currentUser.UserId
+                     && t.BranchId == _currentUser.BranchId
+                     && t.CurrencyCode == Currencies.Htg
+                     && t.Status == TillSessionStatus.Open,
+                cancellationToken);
+            if (till is null)
+                return Result<PaySharesResultDto>.Fail(
+                    "till.not_open",
+                    "Ouvrez la caisse pour payer des parts en espèces.");
+            debitGl = MembershipRules.CashHtgGl == "1010"
+                ? (await _db.GlAccounts.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.TenantId == tenantId && a.Code == MembershipRules.CashHtgGl, cancellationToken))?.Id
+                  ?? Guid.Empty
+                : Guid.Empty;
+            if (debitGl == Guid.Empty)
+                return Result<PaySharesResultDto>.Fail("member.gl", "Compte de caisse introuvable.");
+
+            till.ExpectedCash = MoneyAmount.Normalize(till.ExpectedCash + amount);
+        }
+
+        var capitalCode = shareType == ShareType.Qualification
+            ? MembershipRules.QualificationCapitalGl
+            : MembershipRules.PermanentCapitalGl;
+        var capital = await _db.GlAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.TenantId == tenantId && a.Code == capitalCode, cancellationToken);
+        if (capital is null)
+            return Result<PaySharesResultDto>.Fail("member.gl", "Compte de capital introuvable.");
+
+        var label = shareType == ShareType.Qualification ? "Parts de qualification" : "Parts permanentes";
+        var posted = await _journals.PostAsync(new CreateJournalRequest
+        {
+            Description = $"Paiement {label} — {member.MemberNo} {member.FullName}",
+            CurrencyCode = Currencies.Htg,
+            BranchId = member.BranchId,
+            Lines =
+            [
+                new CreateJournalLineRequest
+                {
+                    GlAccountId = debitGl,
+                    Debit = amount,
+                    Credit = 0m,
+                    Description = useVault ? "Coffre HTG" : "Caisse HTG"
+                },
+                new CreateJournalLineRequest
+                {
+                    GlAccountId = capital.Id,
+                    Debit = 0m,
+                    Credit = amount,
+                    Description = label
+                }
+            ]
+        }, idempotencyKey, cancellationToken);
+        if (!posted.IsSuccess)
+            return Result<PaySharesResultDto>.Fail(posted.ErrorCode!, posted.ErrorMessage!);
+
+        share.ShareCount += units;
+        share.ParValue = par;
+        member.UpdatedAtUtc = _clock.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Member.SharesPaid",
+            nameof(Member),
+            member.Id,
+            new { shareType = shareType.ToString(), units, amount, source, journalId = posted.Value!.Id },
+            tenantId,
+            _currentUser.UserId,
+            cancellationToken: cancellationToken);
+
+        var votes = MembershipRules.HasVotingRights(member);
+        return Result<PaySharesResultDto>.Ok(new PaySharesResultDto(
+            member.Id,
+            shareType.ToString(),
+            units,
+            amount,
+            useVault ? "Vault" : "Till",
+            posted.Value.Id,
+            member.QualificationShareCount,
+            member.PermanentShareCount,
+            votes));
     }
 
     public async Task<Result<AgExportDto>> GetAgExportAsync(CancellationToken cancellationToken = default)
@@ -973,7 +1147,7 @@ public sealed class MemberService : IMemberService
                 account.MemberId,
                 account.ProductId,
                 account.AccountNo,
-                account.Product?.Name ?? string.Empty,
+                account.Product?.DisplayName ?? account.Product?.Name ?? string.Empty,
                 account.CurrencyCode,
                 ledger,
                 available,
@@ -982,6 +1156,9 @@ public sealed class MemberService : IMemberService
                 account.BlockedReason,
                 account.OpenedAtUtc,
                 account.LastPassbookPrintAtUtc,
+                account.MaturesOn,
+                account.AllowWithdrawBeforeTerm,
+                account.Product?.ProductKind.ToString() ?? "AVue",
                 holds));
         }
 
