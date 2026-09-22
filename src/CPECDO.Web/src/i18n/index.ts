@@ -14,4 +14,17 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false }
 });
 
+if (!stored) {
+  void fetch("/ui-locale.json")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j: { lng?: string } | null) => {
+      if (j?.lng === "ht" || j?.lng === "fr" || j?.lng === "en") {
+        void i18n.changeLanguage(j.lng);
+      }
+    })
+    .catch(() => {
+      /* keep default */
+    });
+}
+
 export default i18n;

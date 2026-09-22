@@ -19,6 +19,7 @@ using Microsoft.OpenApi.Models;
 using CPCREDO.WebApi.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
+ConnectionStringProtection.Apply(builder.Configuration, builder.Environment.ContentRootPath);
 if (builder.Environment.IsProduction())
 {
     builder.Logging.AddProvider(new SimpleFileLoggerProvider(

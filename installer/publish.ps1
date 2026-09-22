@@ -92,14 +92,72 @@ Copy-Item -Path (Join-Path $installerDir "INSTALLER-CLIENT.bat") -Destination $O
 Copy-Item -Path (Join-Path $installerDir "Setup-Serveur.ps1") -Destination $OutDir -Force
 Copy-Item -Path (Join-Path $installerDir "Setup-Client.ps1") -Destination $OutDir -Force
 Copy-Item -Path (Join-Path $installerDir "README.txt") -Destination $OutDir -Force
+Copy-Item -Path (Join-Path $installerDir "README-INSTALLATION.txt") -Destination $OutDir -Force
 $backupScript = Join-Path $repoRoot "deploy\windows\backup.ps1"
 if (-not (Test-Path $backupScript)) { throw "deploy\windows\backup.ps1 introuvable." }
 Copy-Item -Path $backupScript -Destination (Join-Path $OutDir "backup.ps1") -Force
 Copy-Item -Path (Join-Path $installerDir "Templates\appsettings.Production.json") -Destination $templates -Force
 Set-Content -LiteralPath (Join-Path $templates "install.lock") -Value $hash -Encoding ASCII -NoNewline
 
+$offlineDir = Join-Path $OutDir "OfflinePackages"
+New-Item -ItemType Directory -Force -Path $offlineDir | Out-Null
+Copy-Item -Path (Join-Path $installerDir "offline-packages.json") -Destination $offlineDir -Force
+$manifest = Get-Content -LiteralPath (Join-Path $installerDir "offline-packages.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$shaLines = New-Object System.Collections.Generic.List[string]
+$cacheDir = Join-Path $installerDir "OfflinePackages"
+New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+
+function Publish-OfflineFile {
+    param($Entry)
+    $name = [string]$Entry.file
+    $url = [string]$Entry.url
+    $min = [int64]$Entry.minBytes
+    $cached = Join-Path $cacheDir $name
+    $dest = Join-Path $offlineDir $name
+    if (-not (Test-Path $cached) -or ((Get-Item $cached).Length -lt $min)) {
+        Write-Host "Telechargement officiel : $name"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $url -OutFile $cached -UseBasicParsing -TimeoutSec 600
+        }
+        catch {
+            Write-Host "Impossible de telecharger $name. Placez le fichier dans installer\OfflinePackages puis relancez publish.ps1." -ForegroundColor Yellow
+            return
+        }
+    }
+    if ((Test-Path $cached) -and ((Get-Item $cached).Length -ge $min)) {
+        Copy-Item -LiteralPath $cached -Destination $dest -Force
+        $hashFile = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLowerInvariant()
+        [void]$shaLines.Add("$hashFile  $name")
+        Write-Host "OfflinePackages : $name"
+    }
+}
+
+Publish-OfflineFile $manifest.vcredist
+Publish-OfflineFile $manifest.dotnetHosting
+Publish-OfflineFile $manifest.dotnetDesktop
+Publish-OfflineFile $manifest.postgresql
+if ($shaLines.Count -gt 0) {
+    Set-Content -LiteralPath (Join-Path $offlineDir "SHA256SUMS.txt") -Value ($shaLines -join "`r`n") -Encoding ASCII
+}
+
+$csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+$stubCs = Join-Path $installerDir "Installer-CPCREDO.cs"
+$stubOut = Join-Path $OutDir "Installer-CPCREDO.exe"
+if (Test-Path $csc) {
+    Write-Host "Compilation de Installer-CPCREDO.exe..."
+    $fw = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319"
+    & $csc /nologo /target:winexe /r:"$fw\System.Windows.Forms.dll" /r:"$fw\System.Drawing.dll" /out:$stubOut $stubCs
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $stubOut)) {
+        Write-Host "Compilation de l'installeur .exe echouee. Utilisez INSTALLER-SERVEUR.bat." -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "csc.exe introuvable. Utilisez INSTALLER-SERVEUR.bat sur la cle." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "Cle USB assemblee : $OutDir"
-Write-Host "Le serveur double-clique INSTALLER-SERVEUR.bat (administrateur)."
+Write-Host "Sur le serveur : clic droit Installer-CPCREDO.exe -> Executer en tant qu'administrateur."
 Write-Host "Le caissier double-clique INSTALLER-CLIENT.bat."
 Write-Host "Le mot de passe d'installation n'est pas stocke ; seul le hash SHA-256 est dans Templates\install.lock."

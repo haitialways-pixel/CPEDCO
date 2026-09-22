@@ -42,6 +42,8 @@ src/CPCREDO.WebApi/data/
 
 ## USB install output (contains hashed lock + binaries, never the install password)
 CPCREDO-USB/
+installer/OfflinePackages/*.exe
+installer/OfflinePackages/*.msi
 artifacts/
 **/admin-initial-password.txt
 **/install.lock

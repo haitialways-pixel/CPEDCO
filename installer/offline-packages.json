@@ -1,0 +1,34 @@
+{
+  "dotnetHosting": {
+    "id": "dotnet",
+    "label": ".NET",
+    "file": "dotnet-hosting-8.0.22-win.exe",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/8.0.22/dotnet-hosting-8.0.22-win.exe",
+    "minBytes": 1000000,
+    "args": "/install /quiet /norestart"
+  },
+  "dotnetDesktop": {
+    "id": "dotnetDesktop",
+    "label": ".NET (interface)",
+    "file": "windowsdesktop-runtime-8.0.22-win-x64.exe",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0.22/windowsdesktop-runtime-8.0.22-win-x64.exe",
+    "minBytes": 1000000,
+    "args": "/install /quiet /norestart"
+  },
+  "vcredist": {
+    "id": "vcredist",
+    "label": "composant Windows",
+    "file": "vcredist_x64.exe",
+    "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    "minBytes": 500000,
+    "args": "/install /quiet /norestart"
+  },
+  "postgresql": {
+    "id": "postgresql",
+    "label": "base de données",
+    "file": "postgresql-16.10-1-windows-x64.exe",
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-16.10-1-windows-x64.exe",
+    "minBytes": 200000000,
+    "args": ""
+  }
+}

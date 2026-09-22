@@ -3,13 +3,14 @@ Caisse Populaire Épargne et de Crédit pour le Développement de l’Ouest
 Pétion-Ville, Haïti
 
 SERVEUR (un seul PC)
-1. Clic droit sur INSTALLER-SERVEUR.bat → Exécuter en tant qu’administrateur
-2. Mot de passe d’installation (5 essais)
-3. Dossier (défaut : C:\CPCREDO)
-4. Mot de passe PostgreSQL (utilisateur postgres)
-5. Notez le mot de passe admin affiché UNE FOIS
-6. Changez-le à la première connexion : https://IP-DU-SERVEUR:5443
+1. Clic droit sur Installer-CPCREDO.exe → Exécuter en tant qu’administrateur
+   (ou INSTALLER-SERVEUR.bat si le .exe n’est pas présent)
+2. Mot de passe d’installation
+3. Suivez les écrans (Suivant). Le dossier est C:\CPCREDO.
+4. Notez le mot de passe admin affiché UNE FOIS, puis cliquez sur Démarrer
+5. Changez-le à la première connexion : https://IP-DU-SERVEUR:5443
    La première visite du navigateur peut afficher un avertissement (certificat auto-signé). Continuer vers le site.
+   Si .NET ou PostgreSQL manquent, l’installeur les pose depuis OfflinePackages (sans internet).
 
 CLIENT (caissiers, autres PC)
 1. Double-cliquer INSTALLER-CLIENT.bat
