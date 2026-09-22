@@ -17,8 +17,8 @@ internal static class Program
         if (!File.Exists(script))
         {
             MessageBox.Show(
-                "Fichier introuvable sur la clé : Setup-Serveur.ps1" + Environment.NewLine +
-                "Utilisez la clé USB complète (dossier CPCREDO-USB).",
+                "File not found on the USB key: Setup-Serveur.ps1" + Environment.NewLine +
+                "Use the complete USB key (CPCREDO-USB folder).",
                 "CPCREDO",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
@@ -42,7 +42,7 @@ internal static class Program
             catch
             {
                 MessageBox.Show(
-                    "Demandez à quelqu’un qui gère cet ordinateur de faire un clic droit sur Installer CPCREDO et choisir Exécuter en tant qu’administrateur.",
+                    "Ask someone who manages this computer to right-click Installer CPCREDO and choose Run as administrator.",
                     "CPCREDO",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -65,8 +65,8 @@ internal static class Program
         catch (Exception ex)
         {
             MessageBox.Show(
-                "Installation interrompue. Relancez Installer CPCREDO." + Environment.NewLine + Environment.NewLine +
-                "Détails techniques : " + ex.Message,
+                "Installation stopped. Run Installer CPCREDO again." + Environment.NewLine + Environment.NewLine +
+                "Technical details: " + ex.Message,
                 "CPCREDO",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);

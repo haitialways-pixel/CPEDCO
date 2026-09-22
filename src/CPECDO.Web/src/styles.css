@@ -31,6 +31,14 @@ body,
   margin: 0;
 }
 
+html.app-locked,
+html.app-locked body,
+html.app-locked #root {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
 body {
   background:
     radial-gradient(1200px 500px at 50% -80px, rgba(196, 163, 90, 0.18), transparent 60%),
@@ -397,10 +405,11 @@ input {
 }
 
 .app-shell {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  overflow-x: hidden;
+  height: 100%;
+  max-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .app-shell__top {
@@ -411,8 +420,7 @@ input {
   padding: 0.3rem 1rem;
   min-height: 2.7rem;
   background: var(--sheet);
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 40;
   border-bottom: 1px solid var(--line);
 }
@@ -424,10 +432,10 @@ input {
   min-height: 2.6rem;
   padding: 0.35rem 1.1rem;
   overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--line);
   background: var(--sheet);
-  position: sticky;
-  top: var(--app-header-h);
+  position: relative;
   z-index: 20;
 }
 
@@ -507,17 +515,32 @@ input {
 }
 
 .app-shell__body {
-  display: flex;
-  flex: 1;
+  display: grid;
+  grid-template-columns: var(--app-sidebar-w) minmax(0, 1fr);
   min-width: 0;
-  align-items: stretch;
+  min-height: 0;
+  height: 100%;
 }
 
 .app-shell__main {
-  flex: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-shell__content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+
+html.app-locked.has-kyc-dock .app-shell__content {
+  padding-bottom: 4.25rem;
 }
 
 .btn-ghost {
@@ -607,13 +630,12 @@ input {
 
 .app-nav--sidebar {
   width: var(--app-sidebar-w);
-  flex-shrink: 0;
-  position: sticky;
-  top: var(--app-header-h);
-  align-self: flex-start;
-  min-height: calc(100vh - var(--app-header-h));
-  max-height: calc(100vh - var(--app-header-h));
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .app-nav--drawer {
@@ -732,6 +754,10 @@ input {
 @media (max-width: 991px) {
   :root {
     --app-sidebar-w: 0px;
+  }
+
+  .app-shell__body {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .app-nav--sidebar {
@@ -1419,6 +1445,38 @@ input {
   box-shadow: none;
 }
 
+.kyc-pieces--dock {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 15;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.btn-kyc-id {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  padding: 0.3rem 0.85rem;
+  border: 1px solid var(--green);
+  background: #cfe8d4;
+  color: var(--flag-red);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.btn-kyc-id:hover {
+  background: #b9dcc2;
+  color: var(--flag-red);
+}
+
 .kyc-identity-head {
   display: flex;
   justify-content: space-between;
@@ -1473,6 +1531,7 @@ input {
   .app-shell__top,
   .app-nav-toggle,
   .app-footer,
+  .kyc-pieces--dock,
   .app-nav-backdrop {
     display: none !important;
   }

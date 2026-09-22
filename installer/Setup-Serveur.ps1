@@ -18,6 +18,7 @@ $script:PublicUrl = "https://127.0.0.1:5443"
 $script:DbCheckOk = $false
 $script:LastTech = ""
 $script:MissingList = @()
+$script:SummaryWritten = $false
 
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
@@ -156,30 +157,34 @@ function Copy-LogToClipboard {
 function Show-ErrorDialog {
     param([string]$Message, [string]$WhatToDo, [string]$Tech = "")
     $script:LastTech = $Tech
-    $logHint = "Journal : C:\CPCREDO\logs\install.log"
-    if ($script:LogPath) { $logHint = "Journal : " + $script:LogPath }
+    $logHint = "Log: C:\CPCREDO\logs\install.log"
+    if ($script:LogPath) { $logHint = "Log: " + $script:LogPath }
+    $launchUrl = $script:PublicUrl
+    if ([string]::IsNullOrWhiteSpace($launchUrl)) { $launchUrl = Resolve-PublicUrl }
     $human = $Message
     if ($WhatToDo) { $human = $human + [Environment]::NewLine + [Environment]::NewLine + $WhatToDo }
-    $human = $human + [Environment]::NewLine + [Environment]::NewLine + $logHint
+    $human = $human + [Environment]::NewLine + [Environment]::NewLine + "ECHEC"
+    $human = $human + [Environment]::NewLine + "Launch URL: " + $launchUrl
+    $human = $human + [Environment]::NewLine + $logHint
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "CPCREDO"
     $form.Width = 640
-    $form.Height = 420
+    $form.Height = 460
     $form.StartPosition = "CenterScreen"
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 12)
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Left = 24; $lbl.Top = 20; $lbl.Width = 580; $lbl.Height = 180
+    $lbl.Left = 24; $lbl.Top = 16; $lbl.Width = 580; $lbl.Height = 190
     $lbl.Text = $human
     $details = New-Object System.Windows.Forms.TextBox
-    $details.Left = 24; $details.Top = 210; $details.Width = 580; $details.Height = 80
+    $details.Left = 24; $details.Top = 214; $details.Width = 580; $details.Height = 70
     $details.Multiline = $true; $details.ReadOnly = $true; $details.ScrollBars = "Vertical"
     $details.Visible = $false
     $details.Text = $Tech
     $btnDetails = New-Object System.Windows.Forms.Button
-    $btnDetails.Text = "Détails techniques"
-    $btnDetails.Left = 24; $btnDetails.Top = 300; $btnDetails.Width = 200; $btnDetails.Height = 40
+    $btnDetails.Text = "Technical details"
+    $btnDetails.Left = 24; $btnDetails.Top = 292; $btnDetails.Width = 200; $btnDetails.Height = 40
     $script:FailDetailsBox = $details
     $btnDetails.Add_Click({
         if ($script:FailDetailsBox) {
@@ -187,18 +192,26 @@ function Show-ErrorDialog {
         }
     })
     $btnCopy = New-Object System.Windows.Forms.Button
-    $btnCopy.Text = "Copier le journal"
-    $btnCopy.Left = 236; $btnCopy.Top = 300; $btnCopy.Width = 180; $btnCopy.Height = 40
+    $btnCopy.Text = "Copy log"
+    $btnCopy.Left = 236; $btnCopy.Top = 292; $btnCopy.Width = 160; $btnCopy.Height = 40
     $btnCopy.Add_Click({ Copy-LogToClipboard })
+    $btnLaunch = New-Object System.Windows.Forms.Button
+    $btnLaunch.Text = "Launch application"
+    $btnLaunch.Left = 408; $btnLaunch.Top = 292; $btnLaunch.Width = 196; $btnLaunch.Height = 40
+    $btnLaunch.Add_Click({
+        $u = $script:PublicUrl
+        if ([string]::IsNullOrWhiteSpace($u)) { $u = Resolve-PublicUrl }
+        Open-CpcredoUrl $u
+    })
     $btnRetry = New-Object System.Windows.Forms.Button
-    $btnRetry.Text = "Réessayer"
+    $btnRetry.Text = "Retry"
     $btnRetry.Left = 24; $btnRetry.Top = 348; $btnRetry.Width = 180; $btnRetry.Height = 40
     $btnRetry.DialogResult = [System.Windows.Forms.DialogResult]::Retry
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = "Annuler"
+    $btnCancel.Text = "Cancel"
     $btnCancel.Left = 216; $btnCancel.Top = 348; $btnCancel.Width = 160; $btnCancel.Height = 40
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $form.Controls.AddRange(@($lbl, $details, $btnDetails, $btnCopy, $btnRetry, $btnCancel))
+    $form.Controls.AddRange(@($lbl, $details, $btnDetails, $btnCopy, $btnLaunch, $btnRetry, $btnCancel))
     $form.AcceptButton = $btnRetry
     $form.CancelButton = $btnCancel
     return $form.ShowDialog()
@@ -212,8 +225,11 @@ function Fail-Step {
     if ($script:StartedPid) {
         try { Stop-Process -Id $script:StartedPid -Force -ErrorAction SilentlyContinue } catch { }
     }
-    $defaultWhat = "Installation interrompue. Un fichier manque sur la cle ou une etape interne a echoue.`r`nRouvrez l'installeur apres verification du dossier CPCREDO-USB.`r`nJournal : C:\CPCREDO\logs\install.log"
+    try { $script:PublicUrl = Resolve-PublicUrl } catch { }
+    $log = if ($script:LogPath) { $script:LogPath } else { "C:\CPCREDO\logs\install.log" }
+    $defaultWhat = "Installation stopped. A file is missing from the USB key or an internal step failed.`r`nReopen the installer after checking the CPCREDO-USB folder.`r`nLog: $log"
     if ([string]::IsNullOrWhiteSpace($WhatToDo)) { $WhatToDo = $defaultWhat }
+    Write-InstallSummary
     $result = Show-ErrorDialog $Message $WhatToDo $tech
     if ($result -eq [System.Windows.Forms.DialogResult]::Retry) {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -298,70 +314,202 @@ function Invoke-Psql {
 }
 
 function Get-LanIPv4 {
+    $preferred = "192.168.10.108"
+    $gatewayIps = New-Object System.Collections.Generic.List[string]
+    $allIps = New-Object System.Collections.Generic.List[string]
+
     try {
-        $addrs = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*"
-            } |
-            Select-Object -ExpandProperty IPAddress)
-        $list = @(As-Array $addrs)
-        if ($list -contains "192.168.10.108") {
-            return @("192.168.10.108") + @($list | Where-Object { $_ -ne "192.168.10.108" })
+        $addrs = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+        foreach ($a in @(As-Array $addrs)) {
+            $ip = $null
+            try { $ip = [string]$a.IPAddress } catch { }
+            if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+            if ($ip -eq "127.0.0.1" -or $ip -like "127.*" -or $ip -like "169.254.*") { continue }
+            if (-not $allIps.Contains($ip)) { [void]$allIps.Add($ip) }
         }
-        return $list
+    } catch { }
+
+    try {
+        $routes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue)
+        $ifIndexes = New-Object System.Collections.Generic.List[int]
+        foreach ($r in @(As-Array $routes)) {
+            try {
+                $idx = [int]$r.InterfaceIndex
+                if (-not $ifIndexes.Contains($idx)) { [void]$ifIndexes.Add($idx) }
+            } catch { }
+        }
+        if ((As-Array $ifIndexes).Count -gt 0) {
+            $gwAddrs = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+            foreach ($a in @(As-Array $gwAddrs)) {
+                $idx = 0
+                try { $idx = [int]$a.InterfaceIndex } catch { continue }
+                if (-not $ifIndexes.Contains($idx)) { continue }
+                $ip = $null
+                try { $ip = [string]$a.IPAddress } catch { }
+                if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+                if ($ip -eq "127.0.0.1" -or $ip -like "127.*" -or $ip -like "169.254.*") { continue }
+                if (-not $gatewayIps.Contains($ip)) { [void]$gatewayIps.Add($ip) }
+                if (-not $allIps.Contains($ip)) { [void]$allIps.Add($ip) }
+            }
+        }
+    } catch { }
+
+    if ((As-Array $gatewayIps).Count -eq 0) {
+        try {
+            $cfgs = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)
+            foreach ($c in @(As-Array $cfgs)) {
+                $hasGw = $false
+                try {
+                    $gw = @(As-Array $c.IPv4DefaultGateway)
+                    if ((As-Array $gw).Count -gt 0) { $hasGw = $true }
+                } catch { }
+                if (-not $hasGw) { continue }
+                $cfgAddrs = @()
+                try { $cfgAddrs = @(As-Array $c.IPv4Address) } catch { }
+                foreach ($a in $cfgAddrs) {
+                    $ip = $null
+                    try { $ip = [string]$a.IPAddress } catch { }
+                    if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+                    if ($ip -eq "127.0.0.1" -or $ip -like "127.*" -or $ip -like "169.254.*") { continue }
+                    if (-not $gatewayIps.Contains($ip)) { [void]$gatewayIps.Add($ip) }
+                    if (-not $allIps.Contains($ip)) { [void]$allIps.Add($ip) }
+                }
+            }
+        } catch { }
     }
-    catch { }
-    return @()
+
+    $ordered = New-Object System.Collections.Generic.List[string]
+    foreach ($ip in @(As-Array $gatewayIps)) { if (-not $ordered.Contains($ip)) { [void]$ordered.Add($ip) } }
+    foreach ($ip in @(As-Array $allIps)) { if (-not $ordered.Contains($ip)) { [void]$ordered.Add($ip) } }
+    $arr = @(As-Array $ordered)
+    if ($allIps.Contains($preferred) -or $arr -contains $preferred) {
+        $rest = @($arr | Where-Object { $_ -ne $preferred })
+        return @($preferred) + $rest
+    }
+    return $arr
+}
+
+function Resolve-PublicUrl {
+    $ips = @(Get-LanIPv4)
+    if ((As-Array $ips).Count -gt 0) {
+        $ip = [string]$ips[0]
+        if (-not [string]::IsNullOrWhiteSpace($ip)) {
+            return "https://${ip}:5443"
+        }
+    }
+    return "https://127.0.0.1:5443"
 }
 
 function Write-InstallSummary {
+    if ($script:SummaryWritten) { return }
+    $script:SummaryWritten = $true
     $ok = [bool]$script:InstallOk
-    $status = if ($ok) { "OK" } else { "ECHEC" }
-    $ips = @(Get-LanIPv4)
-    $ip = if ((As-Array $ips).Count -gt 0) { $ips[0] } else { $null }
-    $url = if ($ip) { "https://${ip}:5443" } else { "https://127.0.0.1:5443" }
+    $status = "ECHEC"
+    if ($ok) { $status = "OK" }
+    $url = Resolve-PublicUrl
+    if ([string]::IsNullOrWhiteSpace($url)) { $url = "https://127.0.0.1:5443" }
+    $script:PublicUrl = $url
+    $ip = $null
+    if ($url -match '^https://([^:/]+):') { $ip = $Matches[1] }
     $bound = $false
     try {
         $listen = @(Get-NetTCPConnection -LocalPort 5443 -State Listen -ErrorAction SilentlyContinue)
         $bound = ((As-Array $listen).Count -gt 0)
     } catch { }
     $procs = @(Get-Process -Name "CPCREDO.WebApi" -ErrorAction SilentlyContinue)
-    $procState = if ((As-Array $procs).Count -gt 0) { "en cours (pid $($procs[0].Id))" } else { "arrete" }
-    $taskState = "inconnue"
+    $procState = "stopped"
+    if ((As-Array $procs).Count -gt 0) { $procState = "running (pid $($procs[0].Id))" }
+    $taskState = "unknown"
     try {
         $tasks = @(Get-ScheduledTask -TaskName "CPCREDO" -ErrorAction SilentlyContinue)
         if ((As-Array $tasks).Count -gt 0) { $taskState = [string]$tasks[0].State }
     } catch { }
-    $log = if ($script:LogPath) { $script:LogPath } else { "C:\CPCREDO\logs\install.log" }
+    $log = "C:\CPCREDO\logs\install.log"
+    if ($script:LogPath) { $log = $script:LogPath }
+    $ipDisplay = "(no LAN IPv4 found; using 127.0.0.1)"
+    if ($ip -and $ip -ne "127.0.0.1") { $ipDisplay = $ip }
     Write-Host ""
     Write-Host "----------------------------------------"
-    Write-Host "Installation : $status"
-    Write-Host "Dossier : C:\CPCREDO"
-    if ($ip) { Write-Host "IP reseau : $ip" } else { Write-Host "IP reseau : (aucune IPv4 LAN detectee)" }
-    Write-Host "URL : $url"
-    Write-Host "HTTP local : http://127.0.0.1:5080 (localhost seulement)"
-    Write-Host "Tache CPCREDO : $taskState"
-    Write-Host "Processus CPCREDO.WebApi : $procState"
+    Write-Host "Installation: $status"
+    Write-Host "Folder: C:\CPCREDO"
+    Write-Host "Detected IP: $ipDisplay"
+    Write-Host "URL: $url"
+    Write-Host "Launch application: $url"
+    Write-Host "Task CPCREDO: $taskState"
+    Write-Host "Process CPCREDO.WebApi: $procState"
     if (-not $bound) {
-        Write-Host "L'API n'ecoute pas le port 5443."
-        Write-Host "Journal : $log"
+        Write-Host "The API is not listening on port 5443."
+        Write-Host "Log: $log"
+        if (-not $ok) { Write-Host "ECHEC - Launch still targets $url" }
     }
     Write-Host "----------------------------------------"
+    $completePath = Join-Path $script:Dest "install-complete.txt"
+    $ipFile = $ip
+    if ([string]::IsNullOrWhiteSpace($ipFile)) { $ipFile = "(none)" }
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add("CPCREDO")
+    [void]$lines.Add("Status: $status")
+    [void]$lines.Add("Folder: C:\CPCREDO")
+    [void]$lines.Add("Detected IP: $ipFile")
+    [void]$lines.Add("URL: $url")
+    [void]$lines.Add("Launch application: $url")
+    [void]$lines.Add("Task CPCREDO: $taskState")
+    [void]$lines.Add("Process CPCREDO.WebApi: $procState")
+    [void]$lines.Add("Log: $log")
+    if (-not $ok -or -not $bound) {
+        [void]$lines.Add("ECHEC - bind or start may have failed. Launch still targets the URL above.")
+    }
+    try {
+        if (-not (Test-Path $script:Dest)) { New-Item -ItemType Directory -Force -Path $script:Dest | Out-Null }
+        Set-Content -LiteralPath $completePath -Value ($lines -join [Environment]::NewLine) -Encoding UTF8
+        Write-InstallLog "COMPLETE_TXT" "OK" $completePath
+    } catch {
+        Write-InstallLog "COMPLETE_TXT" "FAIL" $_.Exception.Message
+    }
+    try { New-DesktopUrlShortcut $url } catch { }
 }
 
 function Open-CpcredoUrl {
     param([string]$Url)
+    $target = $Url
+    if ([string]::IsNullOrWhiteSpace($target)) { $target = Resolve-PublicUrl }
+    if ([string]::IsNullOrWhiteSpace($target)) { $target = "https://127.0.0.1:5443" }
+    $target = $target.Trim()
+    if ($target -notmatch "^https://") {
+        $target = "https://" + ($target -replace "^https?://", "")
+    }
+    if ([string]::IsNullOrWhiteSpace($target) -or $target -eq "https://") {
+        $target = "https://127.0.0.1:5443"
+    }
+    try { Write-InstallLog "BROWSER" "INFO" $target } catch { }
+
+    $rundll = Join-Path $env:SystemRoot "System32\rundll32.exe"
     try {
-        $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
-        Start-Process -FilePath $cmd -ArgumentList "/c start `"`" `"$Url`"" -WindowStyle Hidden | Out-Null
+        Start-Process -FilePath $rundll -ArgumentList @("url.dll,FileProtocolHandler", $target) | Out-Null
         return
     }
     catch { }
-    try { Start-Process $Url | Out-Null } catch { }
+
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $target
+        $psi.UseShellExecute = $true
+        [void][System.Diagnostics.Process]::Start($psi)
+        return
+    }
+    catch { }
+
+    try {
+        $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
+        Start-Process -FilePath $cmd -ArgumentList @("/c", "start", "", $target) | Out-Null
+    }
+    catch { }
 }
 
 function New-DesktopUrlShortcut {
     param([string]$TargetUrl)
+    if ([string]::IsNullOrWhiteSpace($TargetUrl)) { $TargetUrl = Resolve-PublicUrl }
+    if ([string]::IsNullOrWhiteSpace($TargetUrl)) { $TargetUrl = "https://127.0.0.1:5443" }
     $desktop = [Environment]::GetFolderPath("Desktop")
     $urlFile = Join-Path $desktop "CPCREDO.url"
     Set-Content -LiteralPath $urlFile -Value ("[InternetShortcut]`r`nURL=$TargetUrl`r`n") -Encoding ASCII
@@ -425,15 +573,15 @@ function New-OfficeCertificate {
     param([string]$CertDir, [string]$PfxPassword, [string[]]$LanIps)
     New-Item -ItemType Directory -Force -Path $CertDir | Out-Null
     $readme = Join-Path $CertDir "README.txt"
-    Set-Content -LiteralPath $readme -Value "La premiere visite du navigateur peut afficher un avertissement (certificat auto-signe du bureau). Choisissez Continuer vers le site. Aucun nom de domaine public n'est requis." -Encoding UTF8
+    Set-Content -LiteralPath $readme -Value "The first browser visit may show a warning (office self-signed certificate). Choose Continue to the site. No public domain name is required." -Encoding UTF8
     $pfx = Join-Path $CertDir "cpcredo.pfx"
     if ((Test-Path $pfx) -and (Test-PfxPassword -PfxPath $pfx -Password $PfxPassword)) {
-        Write-InstallLog "CERT" "OK" "certificat existant reutilise"
+        Write-InstallLog "CERT" "OK" "existing certificate reused"
         return
     }
     if (Test-Path $pfx) {
         Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
-        Write-InstallLog "CERT" "INFO" "ancien certificat recree (mot de passe ne correspondait plus)"
+        Write-InstallLog "CERT" "INFO" "old certificate recreated (password no longer matched)"
     }
     $sanParts = New-Object System.Collections.Generic.List[string]
     [void]$sanParts.Add("DNS=localhost")
@@ -455,7 +603,7 @@ function New-OfficeCertificate {
         Write-InstallLog "CERT" "OK" $pfx
     }
     catch {
-        throw "Impossible de creer le certificat HTTPS : $($_.Exception.Message)"
+        throw "Could not create the HTTPS certificate: $($_.Exception.Message)"
     }
 }
 
@@ -557,13 +705,13 @@ function Get-OfficialPackage {
         return $local
     }
     if ($local -and -not (Assert-PackageFile $local ([int64]$Entry.minBytes) $ExpectedSha)) {
-        Write-InstallLog "PACKAGE" "INFO" ("fichier USB ignore (taille ou signature) " + $Entry.file)
+        Write-InstallLog "PACKAGE" "INFO" ("USB file ignored (size or signature) " + $Entry.file)
     }
     $destDir = Join-Path $script:Dest "logs\downloads"
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
     $destFile = Join-Path $destDir $Entry.file
     $url = [string]$Entry.url
-    Write-InstallLog "PACKAGE" "INFO" ("telechargement officiel " + $url)
+    Write-InstallLog "PACKAGE" "INFO" ("official download " + $url)
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $client = New-Object System.Net.WebClient
@@ -571,10 +719,10 @@ function Get-OfficialPackage {
         $client.Dispose()
     }
     catch {
-        throw "Pas de connexion stable. Rebranchez la cle USB complete (dossier OfflinePackages) ou reessayez quand internet sera disponible."
+        throw "No stable connection. Reconnect the complete USB key (OfflinePackages folder) or try again when internet is available."
     }
     if (-not (Assert-PackageFile $destFile ([int64]$Entry.minBytes) $ExpectedSha)) {
-        throw "Pas de connexion stable. Rebranchez la cle USB complete (dossier OfflinePackages) ou reessayez quand internet sera disponible."
+        throw "No stable connection. Reconnect the complete USB key (OfflinePackages folder) or try again when internet is available."
     }
     return $destFile
 }
@@ -607,7 +755,7 @@ function Register-ResumeAfterReboot {
         New-Item -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Force | Out-Null
         Set-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "CPCREDO-Install" -Value "`"$cmd`""
     } catch {
-        Write-InstallLog "RESUME" "INFO" "impossible d'enregistrer la reprise automatique"
+        Write-InstallLog "RESUME" "INFO" "could not register automatic resume"
     }
 }
 
@@ -646,43 +794,46 @@ function Show-Page {
     $script:DbLabel.Visible = $false
     $script:BtnBack.Visible = $false
     $script:BtnNext.Enabled = $true
-    $script:BtnNext.Text = "Suivant"
+    $script:BtnNext.Text = "Next"
     if ($Number -eq 1) {
-        $script:Title.Text = "Bienvenue"
+        $script:Title.Text = "Welcome"
         $updateNote = ""
-        if ($script:IsUpdate) { $updateNote = [Environment]::NewLine + [Environment]::NewLine + "CPCREDO est déjà installé. Cliquez sur Suivant pour mettre à jour." }
-        $script:Body.Text = "Installation de CPCREDO. Nous allons préparer cet ordinateur. Cliquez sur Suivant." + $updateNote + [Environment]::NewLine + [Environment]::NewLine + "Mot de passe d'installation :"
+        if ($script:IsUpdate) { $updateNote = [Environment]::NewLine + [Environment]::NewLine + "CPCREDO is already installed. Click Next to update." }
+        $script:Body.Text = "Installing CPCREDO. This computer will be prepared. Click Next." + $updateNote + [Environment]::NewLine + [Environment]::NewLine + "Installation password:"
         $script:PasswordBox.Visible = $true
         $script:PasswordBox.Focus()
     }
     elseif ($Number -eq 2) {
-        $script:Title.Text = "Vérification"
-        $script:Body.Text = "Contrôle de cet ordinateur :"
+        $script:Title.Text = "Check"
+        $script:Body.Text = "Checking this computer:"
         $script:CheckList.Visible = $true
         $script:BtnBack.Visible = $true
     }
     elseif ($Number -eq 3) {
-        $script:Title.Text = "Préparation des composants manquants"
-        $script:Body.Text = "Il manque un outil nécessaire. CPCREDO va l'installer pour vous. Ne fermez pas cette fenêtre."
+        $script:Title.Text = "Preparing missing components"
+        $script:Body.Text = "A required component is missing. CPCREDO will install it. Do not close this window."
         $script:Progress.Visible = $true
         $script:ProgressLabel.Visible = $true
         $script:BtnNext.Enabled = $false
     }
     elseif ($Number -eq 4) {
-        $script:Title.Text = "Installation CPCREDO"
-        $script:Body.Text = "Copie du logiciel et préparation de la caisse. Ne fermez pas cette fenêtre."
+        $script:Title.Text = "Installing CPCREDO"
+        $script:Body.Text = "Copying the software and preparing the till. Do not close this window."
         $script:Progress.Visible = $true
         $script:ProgressLabel.Visible = $true
         $script:BtnNext.Enabled = $false
     }
     elseif ($Number -eq 5) {
-        $script:Title.Text = "Terminé"
-        $script:Body.Text = "CPCREDO est prêt. Cliquez sur Démarrer."
+        $script:Title.Text = "Installation complete"
+        try { $script:PublicUrl = Resolve-PublicUrl } catch { }
+        $url = $script:PublicUrl
+        if ([string]::IsNullOrWhiteSpace($url)) { $url = "https://127.0.0.1:5443" }
+        $script:Body.Text = "CPCREDO is ready." + [Environment]::NewLine + "Address: " + $url + [Environment]::NewLine + "Click Launch application."
         $script:RadioFr.Visible = $true
         $script:RadioHt.Visible = $true
         $script:AdminLabel.Visible = $true
         $script:DbLabel.Visible = $true
-        $script:BtnNext.Text = "Démarrer"
+        $script:BtnNext.Text = "Launch application"
         $script:BtnNext.Enabled = $true
     }
     Wait-Ui
@@ -691,57 +842,57 @@ function Show-Page {
 function Confirm-InstallLockUi {
     $lockPath = Join-Path $UsbRoot "Templates\install.lock"
     if (-not (Test-Path $lockPath)) {
-        Fail-Step "PASSWORD" "Fichier d'installation manquant : Templates\install.lock" "Recreez la cle USB avec publish.ps1 sur le PC developpeur."
+        Fail-Step "PASSWORD" "Installation file missing: Templates\install.lock" "Recreate the USB key with publish.ps1 on the developer PC."
     }
     $expected = (Get-Content -LiteralPath $lockPath -Raw).Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($expected) -or $expected.Length -lt 64) {
-        Fail-Step "PASSWORD" "install.lock invalide." "Recreez la cle USB avec publish.ps1."
+        Fail-Step "PASSWORD" "install.lock is invalid." "Recreate the USB key with publish.ps1."
     }
     $state = Read-InstallState
     if ($state -and $state.resume -eq $true) {
-        Write-InstallLog "PASSWORD" "OK" "reprise apres redemarrage"
+        Write-InstallLog "PASSWORD" "OK" "resume after restart"
         return $true
     }
     $plain = $script:PasswordBox.Text
     if ([string]::IsNullOrWhiteSpace($plain)) {
-        [void][System.Windows.Forms.MessageBox]::Show("Entrez le mot de passe d'installation.", "CPCREDO")
+        [void][System.Windows.Forms.MessageBox]::Show("Enter the installation password.", "CPCREDO")
         return $false
     }
     $actual = Get-InstallPasswordHash $plain
     if ($actual -ne $expected) {
-        [void][System.Windows.Forms.MessageBox]::Show("Mot de passe incorrect.", "CPCREDO")
-        Write-InstallLog "PASSWORD" "FAIL" "essai"
+        [void][System.Windows.Forms.MessageBox]::Show("Incorrect password.", "CPCREDO")
+        Write-InstallLog "PASSWORD" "FAIL" "attempt"
         return $false
     }
-    Write-InstallLog "PASSWORD" "OK" "mot de passe accepte"
+    Write-InstallLog "PASSWORD" "OK" "password accepted"
     return $true
 }
 
 function Update-CheckList {
     $lines = New-Object System.Collections.Generic.List[string]
     $ok = $true
-    if (Test-WindowsOk) { [void]$lines.Add("[OK] Windows : cet ordinateur convient.") }
-    else { [void]$lines.Add("[X] Windows : trop ancien ou 32 bits. Il faut Windows 10 ou 11 64 bits."); $ok = $false }
+    if (Test-WindowsOk) { [void]$lines.Add("[OK] Windows: this computer is suitable.") }
+    else { [void]$lines.Add("[X] Windows: too old or 32-bit. Windows 10 or 11 64-bit is required."); $ok = $false }
 
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        [void]$lines.Add("[OK] Droits administrateur : oui.")
+        [void]$lines.Add("[OK] Administrator rights: yes.")
     }
     else {
-        [void]$lines.Add("[X] Droits administrateur : non.")
+        [void]$lines.Add("[X] Administrator rights: no.")
         $ok = $false
     }
 
     $free = Get-FreeGb
-    if ($free -ge 2) { [void]$lines.Add("[OK] Espace disque : $free Go libres.") }
-    else { [void]$lines.Add("[X] Espace disque : pas assez de place (il faut 2 Go)."); $ok = $false }
+    if ($free -ge 2) { [void]$lines.Add("[OK] Disk space: $free GB free.") }
+    else { [void]$lines.Add("[X] Disk space: not enough space (2 GB required)."); $ok = $false }
 
     $script:MissingList = @()
-    if (Test-DotNet8) { [void]$lines.Add("[OK] .NET : trouve.") }
-    else { [void]$lines.Add("[...] .NET : manquant. CPCREDO l'installera."); $script:MissingList += "dotnet" }
+    if (Test-DotNet8) { [void]$lines.Add("[OK] .NET: found.") }
+    else { [void]$lines.Add("[...] .NET: missing. CPCREDO will install it."); $script:MissingList += "dotnet" }
 
-    if (Test-VcRedist) { [void]$lines.Add("[OK] Composant Windows : trouve.") }
-    else { [void]$lines.Add("[...] Composant Windows : manquant. CPCREDO l'installera."); $script:MissingList += "vcredist" }
+    if (Test-VcRedist) { [void]$lines.Add("[OK] Windows component: found.") }
+    else { [void]$lines.Add("[...] Windows component: missing. CPCREDO will install it."); $script:MissingList += "vcredist" }
 
     $pg = Test-PostgresRunning
     if (-not $pg) {
@@ -752,8 +903,8 @@ function Update-CheckList {
             $pg = Test-PostgresRunning
         }
     }
-    if ($pg -or (Get-PsqlPath)) { [void]$lines.Add("[OK] Base de données : trouvée.") }
-    else { [void]$lines.Add("[...] Base de données : manquante. CPCREDO l'installera."); $script:MissingList += "postgresql" }
+    if ($pg -or (Get-PsqlPath)) { [void]$lines.Add("[OK] Database: found.") }
+    else { [void]$lines.Add("[...] Database: missing. CPCREDO will install it."); $script:MissingList += "postgresql" }
 
     $script:CheckList.Text = [string]::Join([Environment]::NewLine + [Environment]::NewLine, $lines)
     return $ok
@@ -769,7 +920,7 @@ function Set-Progress {
 function Install-MissingComponents {
     $manifest = Get-Manifest
     if ($null -eq $manifest) {
-        throw "Fichier introuvable sur la cle : OfflinePackages\offline-packages.json"
+        throw "File not found on the USB key: OfflinePackages\offline-packages.json"
     }
     $shaMap = Get-ShaMap
     $missing = @(As-Array $script:MissingList)
@@ -778,7 +929,7 @@ function Install-MissingComponents {
     $i = 0
     if ($missing -contains "vcredist") {
         $i++
-        Set-Progress 10 ("Étape $i sur $total : installation d'un composant Windows")
+        Set-Progress 10 ("Step $i of ${total}: installing a Windows component")
         $entry = $manifest.vcredist
         $sha = $shaMap[$entry.file]
         $file = Get-OfficialPackage $entry $sha
@@ -787,14 +938,14 @@ function Install-MissingComponents {
         if ($code -eq 3010 -or $code -eq 1641) {
             Save-InstallState @{ resume = $true; step = "after-vcredist"; needReboot = $true }
             Register-ResumeAfterReboot
-            [void][System.Windows.Forms.MessageBox]::Show("L'ordinateur doit redémarrer. Après le redémarrage, rouvrez Installer CPCREDO. Il reprendra tout seul.", "CPCREDO")
+            [void][System.Windows.Forms.MessageBox]::Show("The computer must restart. After restart, reopen Installer CPCREDO. It will resume automatically.", "CPCREDO")
             Restart-Computer -Force
             exit 0
         }
     }
     if ($missing -contains "dotnet") {
         $i++
-        Set-Progress 40 ("Étape $i sur $total : installation de .NET")
+        Set-Progress 40 ("Step $i of ${total}: installing .NET")
         $entry = $manifest.dotnetHosting
         $sha = $shaMap[$entry.file]
         $file = Get-OfficialPackage $entry $sha
@@ -803,7 +954,7 @@ function Install-MissingComponents {
         if ($code -eq 3010 -or $code -eq 1641) {
             Save-InstallState @{ resume = $true; step = "after-dotnet"; needReboot = $true }
             Register-ResumeAfterReboot
-            [void][System.Windows.Forms.MessageBox]::Show("L'ordinateur doit redémarrer. Après le redémarrage, rouvrez Installer CPCREDO. Il reprendra tout seul.", "CPCREDO")
+            [void][System.Windows.Forms.MessageBox]::Show("The computer must restart. After restart, reopen Installer CPCREDO. It will resume automatically.", "CPCREDO")
             Restart-Computer -Force
             exit 0
         }
@@ -812,30 +963,30 @@ function Install-MissingComponents {
                 $dsha = $shaMap[$manifest.dotnetDesktop.file]
                 $dfile = Get-OfficialPackage $manifest.dotnetDesktop $dsha
                 [void](Invoke-SilentSetup $dfile $manifest.dotnetDesktop.args)
-            } catch { Write-InstallLog "DOTNET" "INFO" "runtime desktop facultatif ignore" }
+            } catch { Write-InstallLog "DOTNET" "INFO" "optional desktop runtime skipped" }
         }
         if (-not (Test-DotNet8)) {
-            throw "L'installation de .NET n'a pas abouti. Reessayez."
+            throw ".NET installation did not complete. Try again."
         }
     }
     if ($missing -contains "postgresql") {
         $i++
-        Set-Progress 75 ("Étape $i sur $total : installation de la base de données")
+        Set-Progress 75 ("Step $i of ${total}: installing the database")
         Install-PostgreSQLOffline $manifest $shaMap
     }
-    Set-Progress 100 "Composants prets."
+    Set-Progress 100 "Components ready."
 }
 
 function Install-PostgreSQLOffline {
     param($Manifest, $ShaMap)
     if (Test-PostgresRunning -or (Get-PsqlPath)) {
-        Write-InstallLog "POSTGRES" "OK" "deja present, installation ignoree"
+        Write-InstallLog "POSTGRES" "OK" "already present, install skipped"
         return
     }
     $port = 5432
     if (Test-PortInUse 5432) {
         $port = 5433
-        Write-InstallLog "POSTGRES" "INFO" "port 5432 occupe, essai 5433"
+        Write-InstallLog "POSTGRES" "INFO" "port 5432 in use, trying 5433"
     }
     $script:PgPort = $port
     $super = New-OneTimePassword
@@ -846,7 +997,7 @@ function Install-PostgreSQLOffline {
     $dataDir = Join-Path $prefix "data"
     $args = "--mode unattended --unattendedmodeui none --superpassword `"$super`" --servicename postgresql-x64-16 --serverport $port --prefix `"$prefix`" --datadir `"$dataDir`" --disable-components stackbuilder --create_shortcuts 0 --install_runtimes 1"
     $code = Invoke-SilentSetup $file $args
-    Write-InstallLog "POSTGRES" "INFO" ("installeur exit " + $code)
+    Write-InstallLog "POSTGRES" "INFO" ("installer exit " + $code)
     Protect-DpapiString $super (Join-Path $script:Dest "logs\pg-setup.dpapi")
     for ($n = 1; $n -le 40; $n++) {
         Wait-Ui
@@ -856,7 +1007,7 @@ function Install-PostgreSQLOffline {
         foreach ($s in $svcs) { try { Start-Service -Name $s.Name -ErrorAction SilentlyContinue } catch { } }
     }
     if (-not (Get-PsqlPath)) {
-        throw "La base de donnees n'a pas pu etre installee. Rebranchez la cle USB complete (dossier OfflinePackages) puis reessayez."
+        throw "The database could not be installed. Reconnect the complete USB key (OfflinePackages folder) then try again."
     }
     $env:PGPASSWORD = $super
 }
@@ -864,7 +1015,7 @@ function Install-PostgreSQLOffline {
 function Copy-AppFromUsb {
     $appSource = Join-Path $UsbRoot "App"
     if (-not (Test-Path $appSource)) {
-        throw "Fichier introuvable sur la cle : $appSource"
+        throw "File not found on the USB key: $appSource"
     }
     $required = @("CPCREDO.WebApi.exe", "CPCREDO.WebApi.dll")
     $missing = New-Object System.Collections.Generic.List[string]
@@ -873,7 +1024,7 @@ function Copy-AppFromUsb {
         if (-not (Test-Path $p)) { [void]$missing.Add($p) }
     }
     if ((As-Array $missing).Count -gt 0) {
-        throw ("Fichier introuvable sur la cle : " + [string]::Join(", ", $missing))
+        throw ("File not found on the USB key: " + [string]::Join(", ", $missing))
     }
 
     foreach ($folder in @($script:Dest, (Join-Path $script:Dest "logs"), (Join-Path $script:Dest "data"), (Join-Path $script:Dest "backups"), (Join-Path $script:Dest "certs"))) {
@@ -906,7 +1057,7 @@ function Copy-AppFromUsb {
             }
         }
         catch {
-            throw "Fichier introuvable sur la cle : $($item.FullName)"
+            throw "File not found on the USB key: $($item.FullName)"
         }
     }
 
@@ -921,11 +1072,11 @@ function Copy-AppFromUsb {
         $assets = Join-Path $destWww "assets"
         $stale = @(Get-ChildItem -LiteralPath $assets -ErrorAction SilentlyContinue)
         if ((As-Array $stale).Count -eq 0) {
-            Write-InstallLog "COPY" "INFO" "wwwroot/assets vide ou absent (ok)"
+            Write-InstallLog "COPY" "INFO" "wwwroot/assets empty or missing (ok)"
         }
     }
     else {
-        Write-InstallLog "COPY" "INFO" "wwwroot absent sur la cle, copie ignoree"
+        Write-InstallLog "COPY" "INFO" "wwwroot missing on the USB key, copy skipped"
     }
 
     $devOnDisk = Join-Path $script:Dest "appsettings.Development.json"
@@ -940,10 +1091,10 @@ function Ensure-PostgresDatabase {
         Start-Sleep -Seconds 3
     }
     if (-not (Test-PostgresRunning)) {
-        throw "La base de donnees n'est pas demarree."
+        throw "The database is not started."
     }
     $psql = Get-PsqlPath
-    if (-not $psql) { throw "Outil de base introuvable (psql)." }
+    if (-not $psql) { throw "Database tool not found (psql)." }
 
     if (-not $env:PGPASSWORD) {
         $saved = Unprotect-DpapiString (Join-Path $script:Dest "logs\pg-setup.dpapi")
@@ -957,12 +1108,12 @@ function Ensure-PostgresDatabase {
         $form.Font = New-UiFont 12
         $lbl = New-Object System.Windows.Forms.Label
         $lbl.Left = 20; $lbl.Top = 20; $lbl.Width = 460; $lbl.Height = 70
-        $lbl.Text = "Une base existe deja. Entrez le mot de passe du compte postgres (un seul champ)."
+        $lbl.Text = "A database already exists. Enter the postgres account password (one field)."
         $tb = New-Object System.Windows.Forms.TextBox
         $tb.Left = 20; $tb.Top = 100; $tb.Width = 360; $tb.UseSystemPasswordChar = $true
         $suggested = New-OneTimePassword
         $btnCopy = New-Object System.Windows.Forms.Button
-        $btnCopy.Text = "Copier"
+        $btnCopy.Text = "Copy"
         $btnCopy.Left = 390; $btnCopy.Top = 96; $btnCopy.Width = 90; $btnCopy.Height = 32
         $btnCopy.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($tb.Text) })
         $ok = New-Object System.Windows.Forms.Button
@@ -972,7 +1123,7 @@ function Ensure-PostgresDatabase {
         $form.AcceptButton = $ok
         $tb.Text = $suggested
         if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or [string]::IsNullOrWhiteSpace($tb.Text)) {
-            throw "Mot de passe de la base manquant."
+            throw "Database password missing."
         }
         $env:PGPASSWORD = $tb.Text
     }
@@ -994,11 +1145,11 @@ END
     Write-InstallLog "POSTGRES_ROLE" "OK" "role cpcredo"
     $exists = Invoke-Psql $psql "postgres" "SELECT 1 FROM pg_database WHERE datname='cpcredo'" $script:PgPort
     if ($exists -eq "1") {
-        Write-InstallLog "POSTGRES_DB" "OK" "cpcredo existe deja - creation ignoree"
+        Write-InstallLog "POSTGRES_DB" "OK" "cpcredo already exists - create skipped"
     }
     else {
         [void](Invoke-Psql $psql "postgres" "CREATE DATABASE cpcredo" $script:PgPort)
-        Write-InstallLog "POSTGRES_DB" "OK" "cpcredo cree"
+        Write-InstallLog "POSTGRES_DB" "OK" "cpcredo created"
     }
     try { [void](Invoke-Psql $psql "postgres" "GRANT ALL ON DATABASE cpcredo TO cpcredo" $script:PgPort) } catch { }
     try { [void](Invoke-Psql $psql "postgres" "ALTER DATABASE cpcredo OWNER TO cpcredo" $script:PgPort) } catch { }
@@ -1067,7 +1218,7 @@ function Write-AppSettings {
 "@
     Set-Content -LiteralPath (Join-Path $script:Dest "appsettings.Production.json") -Value $settings -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $script:Dest "appsettings.json") -Value $settings -Encoding UTF8
-    Write-InstallLog "SETTINGS" "OK" "connexion protegee DPAPI ; Seed:Enabled false"
+    Write-InstallLog "SETTINGS" "OK" "connection protected with DPAPI; Seed:Enabled false"
 }
 
 function Finish-WindowsIntegration {
@@ -1077,7 +1228,7 @@ function Finish-WindowsIntegration {
         if ((As-Array $found).Count -gt 0) { $exe = $found[0].FullName }
     }
     if (-not (Test-Path $exe)) {
-        throw "CPCREDO.WebApi.exe introuvable dans $($script:Dest)"
+        throw "CPCREDO.WebApi.exe not found in $($script:Dest)"
     }
     $starter = @"
 @echo off
@@ -1093,8 +1244,8 @@ start "CPCREDO" /D "$($script:Dest)" "$exe"
     schtasks /Create /TN "CPCREDO" /SC ONSTART /RL HIGHEST /RU SYSTEM /F /TR $tr | Out-Null
     $taskCode = $LASTEXITCODE
     $ErrorActionPreference = $prev
-    if ($taskCode -ne 0) { throw "Impossible d'enregistrer le demarrage automatique." }
-    Write-InstallLog "TASK" "OK" "tache CPCREDO au demarrage"
+    if ($taskCode -ne 0) { throw "Could not register automatic startup." }
+    Write-InstallLog "TASK" "OK" "CPCREDO task at startup"
 
     $backupSrc = Join-Path $UsbRoot "backup.ps1"
     if (-not (Test-Path $backupSrc)) { $backupSrc = Join-Path $UsbRoot "deploy\windows\backup.ps1" }
@@ -1124,7 +1275,7 @@ start "CPCREDO" /D "$($script:Dest)" "$exe"
         Write-InstallLog "BACKUP_TASK" "OK" "18:30"
     }
     else {
-        Write-InstallLog "BACKUP_SCRIPT" "INFO" "backup.ps1 absent sur la cle, tache ignoree"
+        Write-InstallLog "BACKUP_SCRIPT" "INFO" "backup.ps1 missing on the USB key, task skipped"
     }
 
     $ErrorActionPreference = "Continue"
@@ -1133,7 +1284,7 @@ start "CPCREDO" /D "$($script:Dest)" "$exe"
     netsh advfirewall firewall add rule name="CPCREDO 5443" dir=in action=allow protocol=TCP localport=5443 profile=any | Out-Null
     $fw = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
-    if ($fw -ne 0) { throw "Impossible d'ouvrir le port reseau 5443." }
+    if ($fw -ne 0) { throw "Could not open network port 5443." }
     Write-InstallLog "FIREWALL" "OK" "5443"
 
     $script:AdminOnce = New-AdminOneTimePassword
@@ -1149,7 +1300,7 @@ start "CPCREDO" /D "$($script:Dest)" "$exe"
     }
     catch {
         $env:Seed__BootstrapAdminPassword = $null
-        throw "Impossible de demarrer CPCREDO."
+        throw "Could not start CPCREDO."
     }
     $env:Seed__BootstrapAdminPassword = $null
 
@@ -1162,17 +1313,37 @@ start "CPCREDO" /D "$($script:Dest)" "$exe"
             if ($r.StatusCode -eq 200) { $up = $true; break }
         } catch { }
     }
-    if (-not $up) { throw "L'application n'a pas repondu. Ouvrez C:\CPCREDO\app.log puis reessayez." }
+    if (-not $up) { throw "The application did not respond. Open C:\CPCREDO\app.log then try again." }
     Write-InstallLog "HEALTH" "OK" "http://127.0.0.1:5080/health"
 
-    $lan = @(Get-LanIPv4)
-    $script:PublicUrl = "https://127.0.0.1:5443"
-    if ((As-Array $lan).Count -gt 0) { $script:PublicUrl = "https://$($lan[0]):5443" }
+    $script:PublicUrl = Resolve-PublicUrl
+    if ([string]::IsNullOrWhiteSpace($script:PublicUrl)) { $script:PublicUrl = "https://127.0.0.1:5443" }
+
+    $httpsUp = $false
+    for ($n = 1; $n -le 15; $n++) {
+        Wait-Ui
+        try {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+            $hr = Invoke-WebRequest -Uri ($script:PublicUrl.TrimEnd("/") + "/health") -UseBasicParsing -TimeoutSec 3
+            if ($hr.StatusCode -eq 200) { $httpsUp = $true; break }
+        } catch {
+            try {
+                $tcp = New-Object System.Net.Sockets.TcpClient
+                $tcp.Connect("127.0.0.1", 5443)
+                $tcp.Close()
+                $httpsUp = $true
+                break
+            } catch { }
+        }
+        Start-Sleep -Seconds 1
+    }
+    if ($httpsUp) { Write-InstallLog "HEALTH" "OK" ($script:PublicUrl + "/health") }
+    else { Write-InstallLog "HEALTH" "INFO" "5443 not ready yet; browser will still open the intended URL" }
 
     $psql = Get-PsqlPath
     try {
         $userCount = Invoke-Psql $psql "cpcredo" "SELECT COUNT(*) FROM users" $script:PgPort
-        if ($userCount -eq "0") { throw "Aucun utilisateur." }
+        if ($userCount -eq "0") { throw "No user found." }
         $script:DbCheckOk = $true
     }
     catch {
@@ -1182,7 +1353,7 @@ start "CPCREDO" /D "$($script:Dest)" "$exe"
     $onceFile = Join-Path $script:Dest "data\admin-initial-password.txt"
     if (Test-Path $onceFile) {
         try { Remove-Item -LiteralPath $onceFile -Force } catch { }
-        Write-InstallLog "ADMIN_USER" "OK" "fichier mot de passe initial supprime"
+        Write-InstallLog "ADMIN_USER" "OK" "initial password file removed"
     }
     $env:PGPASSWORD = $null
     try { New-DesktopUrlShortcut $script:PublicUrl } catch { }
@@ -1199,6 +1370,9 @@ function Complete-FirstRun {
     } catch { }
     $onceFile = Join-Path $script:Dest "data\admin-initial-password.txt"
     if (Test-Path $onceFile) { try { Remove-Item -LiteralPath $onceFile -Force } catch { } }
+    $script:PublicUrl = Resolve-PublicUrl
+    if ([string]::IsNullOrWhiteSpace($script:PublicUrl)) { $script:PublicUrl = "https://127.0.0.1:5443" }
+    try { New-DesktopUrlShortcut $script:PublicUrl } catch { }
     try { Open-CpcredoUrl $script:PublicUrl } catch { }
     Write-InstallLog "DONE" "OK" $script:PublicUrl
     Save-InstallState @{ resume = $false; step = "done"; needReboot = $false }
@@ -1207,24 +1381,25 @@ function Complete-FirstRun {
 
 function Invoke-Page4 {
     Show-Page 4
-    Set-Progress 10 "Preparation des dossiers..."
+    Set-Progress 10 "Preparing folders..."
     Copy-AppFromUsb
-    Set-Progress 40 "Preparation de la base..."
+    Set-Progress 40 "Preparing the database..."
     Ensure-PostgresDatabase
     Set-Progress 60 "Configuration..."
     Write-AppSettings
-    Set-Progress 80 "Demarrage..."
+    Set-Progress 80 "Starting service..."
     Finish-WindowsIntegration
-    Set-Progress 100 "Termine."
-    if ($script:DbCheckOk) { $script:DbLabel.Text = "Connexion réussie"; $script:DbLabel.ForeColor = [System.Drawing.Color]::ForestGreen }
-    else { $script:DbLabel.Text = "Connexion a verifier (voir le journal)"; $script:DbLabel.ForeColor = [System.Drawing.Color]::DarkOrange }
+    Set-Progress 100 "Done."
+    if ($script:DbCheckOk) { $script:DbLabel.Text = "Connection succeeded"; $script:DbLabel.ForeColor = [System.Drawing.Color]::ForestGreen }
+    else { $script:DbLabel.Text = "Connection to verify (see the log)"; $script:DbLabel.ForeColor = [System.Drawing.Color]::DarkOrange }
     if ($script:IsUpdate) {
-        $script:AdminLabel.Text = "Les comptes existants sont conserves. Changez le mot de passe a la connexion si demande."
+        $script:AdminLabel.Text = "Existing accounts are kept. Change the password at login if prompted."
     }
     else {
         $disp = Format-AdminPasswordDisplay $script:AdminOnce
-        $script:AdminLabel.Text = "Utilisateur : admin" + [Environment]::NewLine + "Mot de passe (une seule fois) : " + $disp + [Environment]::NewLine + "Saisissez-le sans espace ni tiret. 10 caracteres min. a la premiere connexion."
+        $script:AdminLabel.Text = "User: admin" + [Environment]::NewLine + "One-time password: " + $disp + [Environment]::NewLine + "Type it without spaces or hyphens. 10 characters min. at first login."
     }
+    $script:InstallOk = $true
     Show-Page 5
 }
 
@@ -1244,7 +1419,7 @@ function On-Next {
                     Install-MissingComponents
                 }
                 catch {
-                    Fail-Step "COMPONENTS" $_.Exception.Message "Pas de connexion stable. Rebranchez la cle USB complete (dossier OfflinePackages) ou reessayez quand internet sera disponible." $_.Exception.ToString()
+                    Fail-Step "COMPONENTS" $_.Exception.Message "No stable connection. Reconnect the complete USB key (OfflinePackages folder) or try again when internet is available." $_.Exception.ToString()
                 }
             }
             Invoke-Page4
@@ -1265,9 +1440,9 @@ Initialize-Log $usbLog
 
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-InstallLog "ADMIN" "FAIL" "pas administrateur"
+    Write-InstallLog "ADMIN" "FAIL" "not administrator"
     [void][System.Windows.Forms.MessageBox]::Show(
-        "Demandez a quelqu'un qui gere cet ordinateur de faire un clic droit sur Installer CPCREDO et choisir Executer en tant qu'administrateur.",
+        "Ask someone who manages this computer to right-click Installer CPCREDO and choose Run as administrator.",
         "CPCREDO")
     exit 1
 }
@@ -1275,7 +1450,7 @@ Write-InstallLog "ADMIN" "OK" "session administrateur"
 
 $appSource = Join-Path $UsbRoot "App"
 if (-not (Test-Path $appSource)) {
-    Fail-Step "APP" "Dossier App introuvable." "Recreez la cle USB avec publish.ps1."
+    Fail-Step "APP" "App folder not found." "Recreate the USB key with publish.ps1."
 }
 
 New-Item -ItemType Directory -Force -Path $script:Dest | Out-Null
@@ -1289,11 +1464,11 @@ Write-InstallLog "FOLDER" "OK" $script:Dest
 
 if (Test-Path (Join-Path $script:Dest "CPCREDO.WebApi.exe")) {
     $script:IsUpdate = $true
-    Write-InstallLog "UPDATE" "INFO" "installation existante, mode mise a jour"
+    Write-InstallLog "UPDATE" "INFO" "existing installation, update mode"
 }
 
 $script:Form = New-Object System.Windows.Forms.Form
-$script:Form.Text = "Installation de CPCREDO"
+$script:Form.Text = "CPCREDO setup"
 $script:Form.Width = 760
 $script:Form.Height = 560
 $script:Form.StartPosition = "CenterScreen"
@@ -1343,12 +1518,12 @@ $script:DbLabel.Left = 32; $script:DbLabel.Top = 310; $script:DbLabel.Width = 68
 $script:DbLabel.Font = New-UiFont 14 $true
 
 $script:BtnBack = New-Object System.Windows.Forms.Button
-$script:BtnBack.Text = "Retour"
+$script:BtnBack.Text = "Back"
 $script:BtnBack.Left = 32; $script:BtnBack.Top = 450; $script:BtnBack.Width = 160; $script:BtnBack.Height = 48
 $script:BtnBack.Add_Click({ if ($script:Page -eq 2) { Show-Page 1 } })
 
 $script:BtnNext = New-Object System.Windows.Forms.Button
-$script:BtnNext.Text = "Suivant"
+$script:BtnNext.Text = "Next"
 $script:BtnNext.Left = 540; $script:BtnNext.Top = 450; $script:BtnNext.Width = 170; $script:BtnNext.Height = 48
 $script:BtnNext.Font = New-UiFont 14 $true
 $script:BtnNext.Add_Click({ On-Next })
@@ -1380,6 +1555,9 @@ if ($state -and $state.resume -eq $true) {
 else {
     Show-Page 1
 }
+
+try { $script:PublicUrl = Resolve-PublicUrl } catch { $script:PublicUrl = "https://127.0.0.1:5443" }
+if ([string]::IsNullOrWhiteSpace($script:PublicUrl)) { $script:PublicUrl = "https://127.0.0.1:5443" }
 
 $script:InstallOk = $false
 try {

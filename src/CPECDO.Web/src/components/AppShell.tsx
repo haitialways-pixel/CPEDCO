@@ -408,15 +408,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [location.pathname, location.search]);
 
   useEffect(() => {
+    const root = document.getElementById("root");
+    document.documentElement.classList.add("app-locked");
+    document.body.classList.add("app-locked");
+    root?.classList.add("app-locked");
+    return () => {
+      document.documentElement.classList.remove("app-locked");
+      document.body.classList.remove("app-locked");
+      root?.classList.remove("app-locked");
+    };
+  }, []);
+
+  useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setDrawerOpen(false);
     };
     document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
     };
   }, [drawerOpen]);
 
@@ -478,8 +488,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
         <div className="app-shell__main">
           <SubnavBar group={activeGroup} pathname={location.pathname} search={location.search} />
-          {children}
-          <footer className="app-footer">{t("letterhead.sigle")}</footer>
+          <div className="app-shell__content">
+            {children}
+            <footer className="app-footer">{t("letterhead.sigle")}</footer>
+          </div>
         </div>
       </div>
       {drawerOpen ? (

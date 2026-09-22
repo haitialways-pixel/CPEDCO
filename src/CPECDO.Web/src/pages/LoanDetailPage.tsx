@@ -18,7 +18,9 @@ import {
   type TillCashShortfall
 } from "../api/loans";
 import { fetchMemberSavings, type SavingsAccount } from "../api/savings";
+import { fetchMember360, type KycDocument } from "../api/members";
 import { DisburseShortageDialog } from "../components/DisburseShortageDialog";
+import { KycPieces } from "../components/KycPieces";
 import { formatMoney } from "../money";
 import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 
@@ -34,6 +36,7 @@ export function LoanDetailPage() {
   const canDisburse = roles.includes("Caissier");
 
   const [loan, setLoan] = useState<Loan | null>(null);
+  const [kycDocuments, setKycDocuments] = useState<KycDocument[]>([]);
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [savingsAccountId, setSavingsAccountId] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -48,6 +51,12 @@ export function LoanDetailPage() {
   async function load(loanId: string) {
     const next = await fetchLoan(loanId);
     setLoan(next);
+    try {
+      const profile = await fetchMember360(next.memberId);
+      setKycDocuments(profile.kycDocuments ?? []);
+    } catch {
+      setKycDocuments([]);
+    }
     if (next.status === "Approved") {
       const list = await fetchMemberSavings(next.memberId);
       setAccounts(list);
@@ -162,6 +171,18 @@ export function LoanDetailPage() {
             />
           </h1>
           <p>{loan.memberName}</p>
+          <KycPieces
+            memberId={loan.memberId}
+            documents={kycDocuments}
+            onChanged={async () => {
+              try {
+                const profile = await fetchMember360(loan.memberId);
+                setKycDocuments(profile.kycDocuments ?? []);
+              } catch {
+                setKycDocuments([]);
+              }
+            }}
+          />
           <section className="facts">
             <article>
               <span>{t("loans.status")}</span>

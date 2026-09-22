@@ -62,15 +62,32 @@ function Confirm-InstallLock {
 
 function Open-CpcredoUrl {
     param([string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return }
+    $target = $Url.Trim()
+    if ($target -notmatch "^https://") {
+        $target = "https://" + ($target -replace "^https?://", "")
+    }
+    Write-Host "Ouverture : $target"
+
+    $rundll = Join-Path $env:SystemRoot "System32\rundll32.exe"
     try {
-        $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
-        Start-Process -FilePath $cmd -ArgumentList "/c start `"`" `"$Url`"" -WindowStyle Hidden | Out-Null
+        Start-Process -FilePath $rundll -ArgumentList @("url.dll,FileProtocolHandler", $target) | Out-Null
         return
     }
     catch { }
-    try { Start-Process $Url | Out-Null } catch { }
+
     try {
-        Start-Process -FilePath (Join-Path $env:SystemRoot "explorer.exe") -ArgumentList $Url | Out-Null
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $target
+        $psi.UseShellExecute = $true
+        [void][System.Diagnostics.Process]::Start($psi)
+        return
+    }
+    catch { }
+
+    try {
+        $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
+        Start-Process -FilePath $cmd -ArgumentList @("/c", "start", "", $target) | Out-Null
     }
     catch { }
 }

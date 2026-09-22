@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -82,6 +83,11 @@ export function KycPieces({ memberId, documents, onChanged }: Props) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
+    document.documentElement.classList.add("has-kyc-dock");
+    return () => document.documentElement.classList.remove("has-kyc-dock");
+  }, []);
+
+  useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
@@ -90,11 +96,13 @@ export function KycPieces({ memberId, documents, onChanged }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  return (
-    <section className="card-block kyc-pieces kyc-pieces--trigger">
-      <button type="button" className="btn-ghost" onClick={() => setOpen(true)}>
+  return createPortal(
+    <>
+    <div className="kyc-pieces kyc-pieces--dock">
+      <button type="button" className="btn-kyc-id" onClick={() => setOpen(true)}>
         {t("kyc.identityPieces")}
       </button>
+    </div>
       {open ? (
         <div
           className="kyc-modal kyc-identity-modal"
@@ -174,7 +182,8 @@ export function KycPieces({ memberId, documents, onChanged }: Props) {
           </div>
         </div>
       ) : null}
-    </section>
+    </>,
+    document.body
   );
 }
 
