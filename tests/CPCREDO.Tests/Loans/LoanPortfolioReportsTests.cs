@@ -158,7 +158,7 @@ public sealed class LoanPortfolioReportsTests
         h.AsGerant();
         await h.Loans.ApproveAsync(draft.Value.Id);
         h.AsCaissier();
-        await h.Teller.OpenAsync(new CPCREDO.Application.Teller.OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
         var savings = await h.Savings.OpenAccountAsync(h.MemberId, SeedGuids.SavingsProductHtg);
         var disbursed = await h.Loans.DisburseAsync(
             draft.Value.Id,

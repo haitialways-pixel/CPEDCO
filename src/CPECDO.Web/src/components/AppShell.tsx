@@ -184,8 +184,7 @@ const NAV: NavGroup[] = [
       {
         to: "/reports?kind=trial-balance",
         labelKey: "reports.kind.trial-balance",
-        isActive: (pathname, search) =>
-          pathname === "/reports" && (q(search, "kind") === "trial-balance" || q(search, "kind") === null)
+        isActive: (pathname, search) => pathname === "/reports" && q(search, "kind") === "trial-balance"
       },
       {
         to: "/reports?kind=deposits",

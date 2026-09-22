@@ -342,6 +342,7 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
             b.Property(x => x.Description).HasMaxLength(256).IsRequired();
             b.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            b.Property(x => x.PrintedOnLivretAtUtc);
             b.Ignore(x => x.SignedAmount);
             b.HasOne(x => x.SavingsAccount).WithMany(x => x.LedgerEntries).HasForeignKey(x => x.SavingsAccountId).OnDelete(DeleteBehavior.Cascade);
             if (npgsql)
@@ -372,6 +373,8 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
             b.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
             b.Property(x => x.OpeningFloat).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.OpeningMovementId);
+            b.Property(x => x.BusinessDate);
             b.Property(x => x.ExpectedCash).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.CountedCash).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.OverShortAmount).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
@@ -382,7 +385,7 @@ public class CpcredoDbContext : DbContext
             {
                 b.HasIndex(x => new { x.TenantId, x.UserId, x.BranchId, x.CurrencyCode })
                     .IsUnique()
-                    .HasFilter("status = 'Open'");
+                    .HasFilter("status = 'Open' OR status = 'Closing'");
             }
         });
 
@@ -404,9 +407,14 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.MovementNo).HasMaxLength(32).IsRequired();
             b.Property(x => x.Direction).HasConversion<string>().HasMaxLength(16);
             b.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
+            b.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(24);
+            b.Property(x => x.DestinationType).HasConversion<string>().HasMaxLength(24);
+            b.Property(x => x.Reason).HasConversion<string>().HasMaxLength(24);
             b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
             b.Property(x => x.Amount).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.ReceivedAmount).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
             b.Property(x => x.Note).HasMaxLength(512);
+            b.Property(x => x.BagId).HasMaxLength(64);
             b.Property(x => x.IdempotencyKey).HasMaxLength(128);
             b.HasIndex(x => new { x.TenantId, x.MovementNo }).IsUnique();
             if (npgsql)
@@ -418,6 +426,15 @@ public class CpcredoDbContext : DbContext
             b.HasOne(x => x.SourceTillSession).WithMany().HasForeignKey(x => x.SourceTillSessionId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne(x => x.DestinationTillSession).WithMany().HasForeignKey(x => x.DestinationTillSessionId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(x => x.Denominations).WithOne(d => d.Movement).HasForeignKey(d => d.MovementId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<InternalCashDenomination>(b =>
+        {
+            b.ToTable("internal_cash_denominations");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.FaceValue).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
         });
     }
 

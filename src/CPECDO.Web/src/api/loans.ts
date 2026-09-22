@@ -89,6 +89,10 @@ export type Loan = {
   compulsorySavingsAmount: number;
   cashDisbursedAmount: number;
   savingsDisbursedAmount: number;
+  remainingBalanceDue: number;
+  totalRepaid: number;
+  nextPaymentAmount: number | null;
+  nextPaymentDueDate: string | null;
   officerMaxApproval: number | null;
   requiresSecondApproval: boolean;
   submittedByUserId: string | null;
@@ -330,17 +334,50 @@ export async function downloadCollectionSheet(period: "today" | "week", format: 
   URL.revokeObjectURL(url);
 }
 
+export type TillCashShortfall = {
+  code: string;
+  error: string;
+  disbursementAmount: number;
+  drawerAvailable: number;
+  missing: number;
+  currencyCode: string;
+  loanId: string;
+  loanNo: string;
+};
+
+export class TillCashShortfallError extends Error {
+  readonly shortfall: TillCashShortfall;
+  constructor(shortfall: TillCashShortfall) {
+    super(shortfall.error);
+    this.name = "TillCashShortfallError";
+    this.shortfall = shortfall;
+  }
+}
+
+export function isTillCashShortfall(err: unknown): err is TillCashShortfallError {
+  return err instanceof TillCashShortfallError;
+}
+
 export async function disburseLoan(id: string, savingsAccountId?: string): Promise<Loan> {
   const token = getToken();
-  return read(
-    await apiFetch(`/api/v1/loans/${id}/disburse`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        "Idempotency-Key": crypto.randomUUID()
-      },
-      body: JSON.stringify({ savingsAccountId })
-    })
-  );
+  const response = await apiFetch(`/api/v1/loans/${id}/disburse`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "Idempotency-Key": crypto.randomUUID()
+    },
+    body: JSON.stringify({ savingsAccountId })
+  });
+  if (response.status === 409) {
+    const text = await response.text();
+    try {
+      const body = JSON.parse(text) as TillCashShortfall;
+      if (body.code === "till.insufficient_cash") throw new TillCashShortfallError(body);
+    } catch (err) {
+      if (err instanceof TillCashShortfallError) throw err;
+    }
+    throw new Error(text || "Erreur 409");
+  }
+  return read(response);
 }

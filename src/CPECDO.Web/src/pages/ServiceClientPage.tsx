@@ -17,6 +17,8 @@ import {
   blockAccount,
   downloadLivretPdf,
   downloadStatementPdf,
+  LivretEmptyError,
+  printUnprintedLivret,
   unblockAccount,
   type SavingsAccount
 } from "../api/savings";
@@ -154,15 +156,6 @@ function ServiceDetail({ id }: { id: string }) {
       <p className="eyebrow">{member.memberNo}</p>
       <h1>{member.fullName}</h1>
       {error ? <p className="login-form__error">{error}</p> : null}
-      <KycPieces
-        memberId={id}
-        documents={member.kycDocuments ?? []}
-        onChanged={async () => {
-          const next = await fetchMember360(id);
-          setMember(next);
-          setAccounts(next.savingsAccounts ?? []);
-        }}
-      />
       <section className="facts">
         <article>
           <span>{t("members.statusLabel")}</span>
@@ -215,6 +208,15 @@ function ServiceDetail({ id }: { id: string }) {
           setAccounts(next.savingsAccounts ?? []);
         }}
       />
+      <KycPieces
+        memberId={id}
+        documents={member.kycDocuments ?? []}
+        onChanged={async () => {
+          const next = await fetchMember360(id);
+          setMember(next);
+          setAccounts(next.savingsAccounts ?? []);
+        }}
+      />
 
       <section className="card-block">
         <h2>{t("service.pdf")}</h2>
@@ -239,16 +241,35 @@ function ServiceDetail({ id }: { id: string }) {
               type="button"
               className="btn-ghost"
               onClick={() =>
-                void downloadLivretPdf(account.id, pdfFrom, pdfTo)
+                void printUnprintedLivret(account.id)
                   .then(async () => {
                     const next = await fetchMember360(id);
                     setMember(next);
                     setAccounts(next.savingsAccounts ?? []);
                   })
-                  .catch((err: unknown) => setError(err instanceof Error ? err.message : t("service.error")))
+                  .catch((err: unknown) =>
+                    setError(
+                      err instanceof LivretEmptyError
+                        ? t("savings.livretEmpty")
+                        : err instanceof Error
+                          ? err.message
+                          : t("service.error")
+                    )
+                  )
               }
             >
               {t("savings.livret")}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() =>
+                void downloadLivretPdf(account.id).catch((err: unknown) =>
+                  setError(err instanceof Error ? err.message : t("service.error"))
+                )
+              }
+            >
+              {t("savings.exportPdf")}
             </button>
           </div>
         ))}

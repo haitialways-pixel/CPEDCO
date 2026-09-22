@@ -6,9 +6,10 @@ public sealed class Result<T>
     public T? Value { get; init; }
     public string? ErrorCode { get; init; }
     public string? ErrorMessage { get; init; }
+    public object? Details { get; init; }
 
     public static Result<T> Ok(T value) => new() { IsSuccess = true, Value = value };
 
-    public static Result<T> Fail(string code, string message) =>
-        new() { IsSuccess = false, ErrorCode = code, ErrorMessage = message };
+    public static Result<T> Fail(string code, string message, object? details = null) =>
+        new() { IsSuccess = false, ErrorCode = code, ErrorMessage = message, Details = details };
 }

@@ -283,6 +283,32 @@ public sealed class LoanService : ILoanService
 
         var compulsory = MoneyAmount.Normalize(loan.Principal * (loan.CompulsorySavingsPercent / 100m));
         var cashAmount = MoneyAmount.Normalize(loan.Principal - compulsory);
+        if (cashAmount > 0m && till.ExpectedCash < cashAmount)
+        {
+            var available = MoneyAmount.Normalize(till.ExpectedCash);
+            var missing = MoneyAmount.Normalize(cashAmount - available);
+            var shortfall = new TillCashShortfallDto(
+                "till.insufficient_cash",
+                "Le tiroir ne contient pas assez d’espèces pour décaisser ce prêt.",
+                cashAmount,
+                available,
+                missing,
+                loan.CurrencyCode,
+                loan.Id,
+                loan.LoanNo);
+            await _audit.LogAsync(
+                "Loan.DisburseBlocked",
+                nameof(Loan),
+                loan.Id,
+                new { loan.LoanNo, cashAmount, available, missing },
+                loan.TenantId,
+                _currentUser.UserId,
+                cancellationToken: cancellationToken);
+            return Result<LoanDto>.Fail(
+                shortfall.Code,
+                shortfall.Error,
+                shortfall);
+        }
         SavingsAccount? savings = null;
         if (compulsory > 0m)
         {
@@ -925,6 +951,14 @@ public sealed class LoanService : ILoanService
             loan.TotalDue,
             loan.InstallmentCount,
             lines);
+        var remainingBalanceDue = loan.Status is LoanStatus.PaidOff or LoanStatus.WrittenOff
+            ? 0m
+            : MoneyAmount.Normalize(loan.Installments.Sum(LoanRepaymentAllocator.RemainingTotal));
+        var totalRepaid = MoneyAmount.Normalize(
+            loan.Installments.Sum(i => i.PrincipalPaid + i.InterestPaid + i.PenaltyPaid));
+        var nextLine = loan.Installments
+            .OrderBy(i => i.LineNo)
+            .FirstOrDefault(i => LoanRepaymentAllocator.RemainingTotal(i) > 0m);
         return new LoanDto(
             loan.Id,
             loan.LoanNo,
@@ -948,6 +982,10 @@ public sealed class LoanService : ILoanService
             loan.CompulsorySavingsAmount,
             loan.CashDisbursedAmount,
             loan.SavingsDisbursedAmount,
+            remainingBalanceDue,
+            totalRepaid,
+            nextLine is null ? null : LoanRepaymentAllocator.RemainingTotal(nextLine),
+            nextLine?.DueDate,
             loan.Product?.OfficerMaxApproval,
             RequiresSecondApproval(loan),
             loan.SubmittedByUserId,

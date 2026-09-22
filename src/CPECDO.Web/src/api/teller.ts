@@ -42,6 +42,13 @@ export type InternalCashMovement = {
   acceptedAtUtc: string | null;
   journalEntryId: string | null;
   canAccept: boolean;
+  reason?: string;
+  sourceType?: string;
+  destinationType?: string;
+  tellerUserId?: string | null;
+  bagId?: string | null;
+  receivedAmount?: number | null;
+  canReject?: boolean;
 };
 
 export type ReceiptLetterhead = {
@@ -131,13 +138,54 @@ export async function fetchInternalMovements(currency = "HTG"): Promise<Internal
   return (await response.json()) as InternalCashMovement[];
 }
 
+export async function fetchPendingMovements(currency = "HTG"): Promise<InternalCashMovement[]> {
+  const response = await apiFetch(`/api/v1/tills/pending-movements?currency=${currency}`, { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as InternalCashMovement[];
+}
+
+export type CashSource = {
+  kind: string;
+  tillSessionId: string | null;
+  label: string;
+  available: number;
+  currencyCode: string;
+};
+
+export async function fetchCashSources(currency = "HTG"): Promise<CashSource[]> {
+  const response = await apiFetch(`/api/v1/tills/cash-sources?currency=${currency}`, { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  const data: unknown = await response.json();
+  return Array.isArray(data) ? (data as CashSource[]) : [];
+}
+
+export async function fundDrawer(body: {
+  sourceKind: string;
+  sourceTillSessionId?: string;
+  amount: number;
+  currencyCode: string;
+  note?: string;
+  loanId?: string;
+}): Promise<InternalCashMovement> {
+  const response = await apiFetch("/api/v1/tills/fund-drawer", {
+    method: "POST",
+    headers: headers(crypto.randomUUID()),
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as InternalCashMovement;
+}
+
 export async function createInternalMovement(body: {
   direction: string;
   amount: number;
   currencyCode: string;
   sourceTillSessionId?: string;
   destinationTillSessionId?: string;
+  destinationTellerUserId?: string;
+  reason?: string;
   note?: string;
+  bagId?: string;
 }): Promise<InternalCashMovement> {
   const response = await apiFetch("/api/v1/tills/internal-movements", {
     method: "POST",
@@ -148,10 +196,24 @@ export async function createInternalMovement(body: {
   return (await response.json()) as InternalCashMovement;
 }
 
-export async function acceptInternalMovement(id: string): Promise<InternalCashMovement> {
+export async function acceptInternalMovement(
+  id: string,
+  countedAmount?: number
+): Promise<InternalCashMovement> {
   const response = await apiFetch(`/api/v1/tills/internal-movements/${id}/accept`, {
     method: "POST",
-    headers: headers(crypto.randomUUID())
+    headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ countedAmount: countedAmount ?? null })
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as InternalCashMovement;
+}
+
+export async function rejectInternalMovement(id: string, reason: string): Promise<InternalCashMovement> {
+  const response = await apiFetch(`/api/v1/tills/internal-movements/${id}/reject`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ reason })
   });
   if (!response.ok) throw new Error(await parseError(response));
   return (await response.json()) as InternalCashMovement;

@@ -45,5 +45,24 @@ public interface ITellerService
     Task<Result<InternalCashMovementDto>> AcceptInternalMovementAsync(
         Guid movementId,
         string? idempotencyKey,
+        CancellationToken cancellationToken = default,
+        AcceptMovementRequest? accept = null);
+
+    Task<Result<InternalCashMovementDto>> RejectInternalMovementAsync(
+        Guid movementId,
+        RejectMovementRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<IReadOnlyList<InternalCashMovementDto>>> ListPendingForTellerAsync(
+        string? currencyCode,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<IReadOnlyList<CashSourceDto>>> ListCashSourcesAsync(
+        string? currencyCode,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<InternalCashMovementDto>> FundDrawerAsync(
+        FundDrawerRequest request,
+        string? idempotencyKey,
         CancellationToken cancellationToken = default);
 }

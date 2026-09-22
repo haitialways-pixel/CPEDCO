@@ -13,6 +13,8 @@ public class TillSession
     public string CurrencyCode { get; set; } = Currencies.Htg;
     public TillSessionStatus Status { get; set; } = TillSessionStatus.Open;
     public decimal OpeningFloat { get; set; }
+    public Guid? OpeningMovementId { get; set; }
+    public DateOnly? BusinessDate { get; set; }
     public decimal ExpectedCash { get; set; }
     public decimal? CountedCash { get; set; }
     public decimal? OverShortAmount { get; set; }

@@ -16,6 +16,7 @@ public class SavingsLedgerEntry
     public Guid? JournalEntryId { get; set; }
     public Guid? TillSessionId { get; set; }
     public string? IdempotencyKey { get; set; }
+    public DateTime? PrintedOnLivretAtUtc { get; set; }
 
     public SavingsAccount? SavingsAccount { get; set; }
 

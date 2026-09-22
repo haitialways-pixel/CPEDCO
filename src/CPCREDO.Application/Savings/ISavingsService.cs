@@ -45,6 +45,15 @@ public interface ISavingsService
         DateOnly? to,
         CancellationToken cancellationToken = default);
 
+    Task<Result<LivretPrintPreviewDto>> GetUnprintedLivretAsync(
+        Guid accountId,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<LivretPrintPreviewDto>> ConfirmLivretPrintAsync(
+        Guid accountId,
+        ConfirmLivretPrintRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<Result<SavingsAccountDto>> PlaceHoldAsync(
         Guid accountId,
         PlaceHoldRequest request,

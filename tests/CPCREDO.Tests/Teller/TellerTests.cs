@@ -96,7 +96,7 @@ public sealed class TellerTests
 
         Assert.True(closed.IsSuccess, closed.ErrorMessage);
         Assert.Equal("Closed", closed.Value!.Status);
-        Assert.Equal(500m, closed.Value.ExpectedCash);
+        Assert.Equal(0m, closed.Value.ExpectedCash);
         Assert.Equal(400m, closed.Value.CountedCash);
         Assert.Equal(-100m, closed.Value.OverShortAmount);
         Assert.Equal("Manquant constaté au comptage.", closed.Value.Notes);
@@ -187,7 +187,8 @@ public sealed class TellerTests
         Assert.Equal(500m, closed.Value.CountedCash);
         Assert.Equal(0m, closed.Value.OverShortAmount);
         Assert.Null(closed.Value.OverShortJournalId);
-        Assert.Equal(0, await h.Db.JournalEntries.CountAsync());
+        Assert.False(await h.Db.JournalEntries.AnyAsync(j => j.Lines.Any(l => l.GlAccountId == SeedGuids.Gl("4040") || l.GlAccountId == SeedGuids.Gl("5050"))));
+        Assert.True(await h.Db.InternalCashMovements.AnyAsync(m => m.Reason == CashMovementReason.CloseReturn && m.Status == InternalCashStatus.Accepted));
     }
 
     [Fact]
@@ -242,7 +243,7 @@ public sealed class TellerTests
         using var h = new TellerHarness();
         var opened = await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg });
         Assert.False(opened.IsSuccess);
-        Assert.Equal("till.float", opened.ErrorCode);
+        Assert.Equal("till.movement_required", opened.ErrorCode);
     }
 
     [Fact]
@@ -253,6 +254,9 @@ public sealed class TellerTests
         var till = await h.OpenTillAsync(0m);
         Assert.True(till.IsSuccess, till.ErrorMessage);
 
+        var tellerId = h.User.UserId;
+        h.User.UserId = SeedGuids.GerantUserId;
+        h.User.Roles = [RoleNames.Gerant];
         var created = await h.Teller.CreateInternalMovementAsync(
             new CreateInternalCashRequest
             {
@@ -264,7 +268,8 @@ public sealed class TellerTests
             "int-v2t");
         Assert.True(created.IsSuccess, created.ErrorMessage);
         Assert.Equal("Pending", created.Value!.Status);
-
+        h.User.UserId = tellerId;
+        h.User.Roles = [RoleNames.Caissier];
         var accepted = await h.Teller.AcceptInternalMovementAsync(created.Value.Id, "int-v2t-acc");
         Assert.True(accepted.IsSuccess, accepted.ErrorMessage);
         Assert.Equal("Accepted", accepted.Value!.Status);
@@ -291,6 +296,7 @@ public sealed class TellerTests
             "int-t2v");
         Assert.True(created.IsSuccess, created.ErrorMessage);
 
+        h.User.UserId = SeedGuids.GerantUserId;
         h.User.Roles = [RoleNames.Gerant];
         var accepted = await h.Teller.AcceptInternalMovementAsync(created.Value!.Id, "int-t2v-acc");
         Assert.True(accepted.IsSuccess, accepted.ErrorMessage);
@@ -368,6 +374,134 @@ public sealed class TellerTests
             "int-empty");
         Assert.False(created.IsSuccess);
         Assert.Equal("internal.amount", created.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Ticket_before_accept_is_conflict()
+    {
+        using var h = new TellerHarness();
+        var opened = await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 100m });
+        Assert.False(opened.IsSuccess);
+        Assert.Equal("till.movement_required", opened.ErrorCode);
+        var account = await h.OpenSavingsAsync();
+        var posted = await h.Teller.DepositAsync(
+            new CashPostRequest { SavingsAccountId = account.Id, Amount = 10m },
+            "dep-before-open");
+        Assert.False(posted.IsSuccess);
+        Assert.Equal("till.not_open", posted.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Accept_count_mismatch_and_self_accept_and_teller_vault_to_self_are_rejected()
+    {
+        using var h = new TellerHarness();
+        await h.FundVaultAsync(1_000m);
+        h.User.UserId = SeedGuids.GerantUserId;
+        h.User.Roles = [RoleNames.Gerant];
+        var issued = await h.Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                Reason = "OpeningFloat",
+                Amount = 200m,
+                DestinationTellerUserId = SeedGuids.AdminUserId
+            },
+            "gap-open");
+        Assert.True(issued.IsSuccess, issued.ErrorMessage);
+        var self = await h.Teller.AcceptInternalMovementAsync(
+            issued.Value!.Id,
+            "gap-self",
+            accept: new AcceptMovementRequest { CountedAmount = 200m });
+        Assert.False(self.IsSuccess);
+        Assert.Equal("internal.self_accept", self.ErrorCode);
+
+        h.User.UserId = SeedGuids.AdminUserId;
+        h.User.Roles = [RoleNames.Caissier];
+        var mismatch = await h.Teller.AcceptInternalMovementAsync(
+            issued.Value.Id,
+            "gap-mis",
+            accept: new AcceptMovementRequest { CountedAmount = 199m });
+        Assert.False(mismatch.IsSuccess);
+        Assert.Equal("till.count_mismatch", mismatch.ErrorCode);
+
+        var vaultSelf = await h.Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                Reason = "OpeningFloat",
+                Amount = 50m,
+                DestinationTellerUserId = SeedGuids.AdminUserId
+            },
+            "gap-self-issue");
+        Assert.False(vaultSelf.IsSuccess);
+        Assert.Equal("auth.forbidden", vaultSelf.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Accept_opening_float_opens_till_reject_leaves_closed()
+    {
+        using var h = new TellerHarness();
+        await h.FundVaultAsync(5_000m);
+        h.User.UserId = SeedGuids.GerantUserId;
+        h.User.Roles = [RoleNames.Gerant];
+        var issued = await h.Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                Reason = "OpeningFloat",
+                Amount = 300m,
+                DestinationTellerUserId = SeedGuids.AdminUserId
+            },
+            "gap-ok");
+        h.User.UserId = SeedGuids.AdminUserId;
+        h.User.Roles = [RoleNames.Caissier];
+        var ok = await h.Teller.AcceptInternalMovementAsync(
+            issued.Value!.Id,
+            "gap-ok-acc",
+            accept: new AcceptMovementRequest { CountedAmount = 300m });
+        Assert.True(ok.IsSuccess, ok.ErrorMessage);
+        var till = await h.Db.TillSessions.SingleAsync(t => t.UserId == SeedGuids.AdminUserId && t.Status == TillSessionStatus.Open);
+        Assert.Equal(300m, till.OpeningFloat);
+        Assert.Equal(issued.Value.Id, till.OpeningMovementId);
+
+        h.User.UserId = SeedGuids.GerantUserId;
+        h.User.Roles = [RoleNames.Gerant];
+        var other = await h.Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                Reason = "OpeningFloat",
+                Amount = 80m,
+                DestinationTellerUserId = SeedGuids.CaissierUserId
+            },
+            "gap-rej");
+        h.User.UserId = SeedGuids.CaissierUserId;
+        h.User.Roles = [RoleNames.Caissier];
+        var rejected = await h.Teller.RejectInternalMovementAsync(
+            other.Value!.Id,
+            new RejectMovementRequest { Reason = "Billet manquant" });
+        Assert.True(rejected.IsSuccess, rejected.ErrorMessage);
+        Assert.Equal("Rejected", rejected.Value!.Status);
+        Assert.False(await h.Db.TillSessions.AnyAsync(t => t.UserId == SeedGuids.CaissierUserId && t.Status == TillSessionStatus.Open));
+    }
+
+    [Fact]
+    public async Task Source_shares_is_rejected()
+    {
+        using var h = new TellerHarness();
+        h.User.UserId = SeedGuids.GerantUserId;
+        h.User.Roles = [RoleNames.Gerant];
+        var created = await h.Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                SourceType = "Shares",
+                Amount = 10m,
+                DestinationTellerUserId = SeedGuids.AdminUserId
+            },
+            "gap-shares");
+        Assert.False(created.IsSuccess);
+        Assert.Equal("internal.location", created.ErrorCode);
     }
 
     [Fact]
@@ -627,6 +761,17 @@ internal sealed class TellerHarness : IDisposable
             PasswordHash = "hash",
             CreatedAtUtc = now
         });
+        Db.Users.Add(new User
+        {
+            Id = SeedGuids.GerantUserId,
+            TenantId = SeedGuids.TenantId,
+            BranchId = SeedGuids.BranchId,
+            Username = "gerant",
+            Email = "gerant@cpcredo.ht",
+            FullName = "Gérant Test",
+            PasswordHash = "hash",
+            CreatedAtUtc = now
+        });
         Db.GlAccounts.AddRange(
             Gl("1010", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg),
             Gl("1030", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg),
@@ -660,8 +805,34 @@ internal sealed class TellerHarness : IDisposable
         Teller = new TellerService(Db, User, clock, journals, audit);
     }
 
-    public Task<CPCREDO.Application.Common.Result<TillSessionDto>> OpenTillAsync(decimal openingFloat = 0m) =>
-        Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = openingFloat });
+    public async Task<CPCREDO.Application.Common.Result<TillSessionDto>> OpenTillAsync(decimal openingFloat = 0m)
+    {
+        if (openingFloat > 0m)
+            await FundVaultAsync(openingFloat + 50_000m);
+        var tellerId = User.UserId!.Value;
+        var tellerRoles = User.Roles;
+        User.UserId = SeedGuids.GerantUserId;
+        User.Roles = [RoleNames.Gerant];
+        var issued = await Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                Reason = "OpeningFloat",
+                Amount = openingFloat,
+                CurrencyCode = Currencies.Htg,
+                DestinationTellerUserId = tellerId
+            },
+            "open-" + Guid.NewGuid().ToString("N"));
+        Assert.True(issued.IsSuccess, issued.ErrorMessage);
+        User.UserId = tellerId;
+        User.Roles = tellerRoles;
+        var accepted = await Teller.AcceptInternalMovementAsync(
+            issued.Value!.Id,
+            "open-acc-" + Guid.NewGuid().ToString("N"),
+            accept: new AcceptMovementRequest { CountedAmount = openingFloat });
+        Assert.True(accepted.IsSuccess, accepted.ErrorMessage);
+        return await Teller.GetCurrentAsync(Currencies.Htg);
+    }
 
     public async Task FundVaultAsync(decimal amount)
     {

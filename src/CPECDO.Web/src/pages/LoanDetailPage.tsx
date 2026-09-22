@@ -6,6 +6,7 @@ import {
   approveLoan,
   disburseLoan,
   fetchLoan,
+  isTillCashShortfall,
   previewPayoffQuote,
   rejectLoan,
   renewLoan,
@@ -13,9 +14,11 @@ import {
   submitLoan,
   type Loan,
   type LoanReceipt,
-  type PayoffQuote
+  type PayoffQuote,
+  type TillCashShortfall
 } from "../api/loans";
 import { fetchMemberSavings, type SavingsAccount } from "../api/savings";
+import { DisburseShortageDialog } from "../components/DisburseShortageDialog";
 import { formatMoney } from "../money";
 
 export function LoanDetailPage() {
@@ -38,6 +41,7 @@ export function LoanDetailPage() {
   const [quote, setQuote] = useState<PayoffQuote | null>(null);
   const [busy, setBusy] = useState(false);
   const [repayAmount, setRepayAmount] = useState("");
+  const [shortage, setShortage] = useState<TillCashShortfall | null>(null);
 
   async function load(loanId: string) {
     const next = await fetchLoan(loanId);
@@ -77,10 +81,28 @@ export function LoanDetailPage() {
     }
   }
 
+  async function attemptDisburse() {
+    if (!loan) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await disburseLoan(loan.id, savingsAccountId || undefined);
+      setLoan(next);
+      setShortage(null);
+    } catch (err) {
+      if (isTillCashShortfall(err)) {
+        setShortage(err.shortfall);
+      } else {
+        setError(err instanceof Error ? err.message : t("loans.error"));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onDisburse(event: FormEvent) {
     event.preventDefault();
-    if (!loan) return;
-    await run(() => disburseLoan(loan.id, savingsAccountId || undefined));
+    await attemptDisburse();
   }
 
   async function onQuote() {
@@ -139,6 +161,39 @@ export function LoanDetailPage() {
             <article>
               <span>{t("loans.status")}</span>
               <strong>{t(`loans.status.${loan.status}`, { defaultValue: loan.status })}</strong>
+            </article>
+            <article>
+              <span>{t("loans.remainingBalanceDue")}</span>
+              <strong className="tabular-nums">
+                {formatMoney(
+                  loan.status === "PaidOff" || loan.status === "WrittenOff" ? 0 : loan.remainingBalanceDue ?? 0,
+                  loan.currencyCode
+                )}
+              </strong>
+            </article>
+            <article>
+              <span>{t("loans.originalAmount")}</span>
+              <strong className="tabular-nums">{formatMoney(loan.principal, loan.currencyCode)}</strong>
+            </article>
+            <article>
+              <span>{t("loans.totalDisbursed")}</span>
+              <strong className="tabular-nums">
+                {formatMoney((loan.cashDisbursedAmount ?? 0) + (loan.savingsDisbursedAmount ?? 0), loan.currencyCode)}
+              </strong>
+            </article>
+            <article>
+              <span>{t("loans.totalRepaid")}</span>
+              <strong className="tabular-nums">{formatMoney(loan.totalRepaid ?? 0, loan.currencyCode)}</strong>
+            </article>
+            <article>
+              <span>{t("loans.nextPayment")}</span>
+              <strong className="tabular-nums">
+                {loan.nextPaymentAmount == null ? "—" : formatMoney(loan.nextPaymentAmount, loan.currencyCode)}
+              </strong>
+            </article>
+            <article>
+              <span>{t("loans.nextDueDate")}</span>
+              <strong>{loan.nextPaymentDueDate ?? "—"}</strong>
             </article>
             <article>
               <span>{t("loans.principal")}</span>
@@ -338,6 +393,13 @@ export function LoanDetailPage() {
                 {busy ? t("loans.saving") : t("loans.disburse")}
               </button>
             </form>
+          ) : null}
+          {shortage ? (
+            <DisburseShortageDialog
+              shortfall={shortage}
+              onCancel={() => setShortage(null)}
+              onFunded={() => attemptDisburse()}
+            />
           ) : null}
 
           <h2>{t("loans.schedule")}</h2>

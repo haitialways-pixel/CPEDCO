@@ -11,11 +11,30 @@ public sealed class OpenTillRequest
 public sealed class CreateInternalCashRequest
 {
     public string Direction { get; set; } = string.Empty;
+    public string? Reason { get; set; }
+    public string? SourceType { get; set; }
+    public string? DestinationType { get; set; }
     public decimal? Amount { get; set; }
     public string CurrencyCode { get; set; } = Currencies.Htg;
     public Guid? SourceTillSessionId { get; set; }
     public Guid? DestinationTillSessionId { get; set; }
+    public Guid? DestinationTellerUserId { get; set; }
+    public Guid? BankAccountId { get; set; }
+    public string? BagId { get; set; }
     public string? Note { get; set; }
+    public List<TillCountLineRequest> Denominations { get; set; } = [];
+}
+
+public sealed class AcceptMovementRequest
+{
+    public Guid? MovementId { get; set; }
+    public decimal? CountedAmount { get; set; }
+    public List<TillCountLineRequest> Denominations { get; set; } = [];
+}
+
+public sealed class RejectMovementRequest
+{
+    public string Reason { get; set; } = string.Empty;
 }
 
 public sealed record OpenTillPeerDto(
@@ -24,6 +43,23 @@ public sealed record OpenTillPeerDto(
     string CashierName,
     string CurrencyCode,
     decimal ExpectedCash);
+
+public sealed record CashSourceDto(
+    string Kind,
+    Guid? TillSessionId,
+    string Label,
+    decimal Available,
+    string CurrencyCode);
+
+public sealed class FundDrawerRequest
+{
+    public string SourceKind { get; set; } = "Vault";
+    public Guid? SourceTillSessionId { get; set; }
+    public decimal Amount { get; set; }
+    public string CurrencyCode { get; set; } = Currencies.Htg;
+    public string? Note { get; set; }
+    public Guid? LoanId { get; set; }
+}
 
 public sealed record InternalCashMovementDto(
     Guid Id,
@@ -40,7 +76,15 @@ public sealed record InternalCashMovementDto(
     DateTime CreatedAtUtc,
     DateTime? AcceptedAtUtc,
     Guid? JournalEntryId,
-    bool CanAccept);
+    bool CanAccept,
+    string Reason = "",
+    string SourceType = "",
+    string DestinationType = "",
+    Guid? TellerUserId = null,
+    DateOnly? BusinessDate = null,
+    string? BagId = null,
+    decimal? ReceivedAmount = null,
+    bool CanReject = false);
 
 public sealed class TillCountLineRequest
 {
@@ -55,6 +99,10 @@ public sealed class CloseTillRequest
     public string? Notes { get; set; }
 
     public List<TillCountLineRequest> Denominations { get; set; } = [];
+
+    public string? CloseReturnDestination { get; set; }
+
+    public string? BagId { get; set; }
 }
 
 public sealed class CashPostRequest

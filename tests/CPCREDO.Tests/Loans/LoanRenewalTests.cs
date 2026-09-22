@@ -96,7 +96,7 @@ public sealed class LoanRenewalTests
         var approved = await h.Loans.ApproveAsync(draft.Value.Id);
         Assert.True(approved.IsSuccess, approved.ErrorMessage);
         h.AsCaissier();
-        var till = await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        var till = await h.OpenTillAsync(50_000m);
         Assert.True(till.IsSuccess, till.ErrorMessage);
         var savings = await h.Savings.OpenAccountAsync(h.MemberId, SeedGuids.SavingsProductHtg);
         var disbursed = await h.Loans.DisburseAsync(

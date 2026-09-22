@@ -41,51 +41,16 @@ public sealed class TellerService : ITellerService
         if (!gate.IsSuccess)
             return Result<TillSessionDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
 
-        var currency = NormalizeCurrency(request.CurrencyCode);
-        if (currency is null)
-            return Result<TillSessionDto>.Fail("till.currency", "Devise non supportée.");
+        var currency = NormalizeCurrency(request.CurrencyCode) ?? Currencies.Htg;
+        var pending = await PendingOpeningAsync(currency, cancellationToken);
+        if (pending is not null)
+            return Result<TillSessionDto>.Fail(
+                "till.movement_required",
+                "Un mouvement de fonds doit être émis vers votre caisse. Comptez, acceptez le montant reçu, puis la caisse s’ouvre. Les parts et l’épargne ne sont pas une provenance d’ouverture.");
 
-        if (request.OpeningFloat is null)
-            return Result<TillSessionDto>.Fail("till.float", "Les espèces en main sont obligatoires.");
-        var floatAmount = MoneyAmount.Normalize(request.OpeningFloat.Value);
-        if (floatAmount < 0m)
-            return Result<TillSessionDto>.Fail("till.float", "Le fond de caisse ne peut pas être négatif.");
-
-        var tenantId = _currentUser.TenantId!.Value;
-        var userId = _currentUser.UserId!.Value;
-        var branchId = _currentUser.BranchId!.Value;
-
-        var openExists = await _db.TillSessions.AnyAsync(
-            t => t.TenantId == tenantId && t.UserId == userId && t.BranchId == branchId
-                 && t.CurrencyCode == currency && t.Status == TillSessionStatus.Open,
-            cancellationToken);
-        if (openExists)
-            return Result<TillSessionDto>.Fail("till.already_open", "Une caisse est déjà ouverte pour cet utilisateur, cette agence et cette devise.");
-
-        var till = new TillSession
-        {
-            TenantId = tenantId,
-            BranchId = branchId,
-            UserId = userId,
-            CurrencyCode = currency,
-            Status = TillSessionStatus.Open,
-            OpeningFloat = floatAmount,
-            ExpectedCash = floatAmount,
-            OpenedAtUtc = _clock.UtcNow
-        };
-        _db.TillSessions.Add(till);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        await _audit.LogAsync(
-            "Till.Opened",
-            nameof(TillSession),
-            till.Id,
-            new { till.CurrencyCode, till.OpeningFloat },
-            tenantId,
-            userId,
-            cancellationToken: cancellationToken);
-
-        return Result<TillSessionDto>.Ok(MapTill(till));
+        return Result<TillSessionDto>.Fail(
+            "till.movement_required",
+            "Un mouvement de fonds doit être émis vers votre caisse. Comptez, acceptez le montant reçu, puis la caisse s’ouvre. Les parts et l’épargne ne sont pas une provenance d’ouverture.");
     }
 
     public async Task<Result<TillSessionDto>> GetCurrentAsync(string? currencyCode, CancellationToken cancellationToken = default)
@@ -176,8 +141,7 @@ public sealed class TellerService : ITellerService
         till.CountedCash = counted;
         till.OverShortAmount = overShort;
         till.Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
-        till.Status = TillSessionStatus.Closed;
-        till.ClosedAtUtc = _clock.UtcNow;
+        till.Status = TillSessionStatus.Closing;
 
         if (overShort != 0m)
         {
@@ -212,6 +176,63 @@ public sealed class TellerService : ITellerService
 
             till.OverShortJournalId = journal.Value!.Id;
         }
+
+        if (counted > 0m)
+        {
+            var dest = (request.CloseReturnDestination ?? "Vault").Trim();
+            var tillGl = await RequireGlAsync(TreasuryGl.Till(till.CurrencyCode), till.CurrencyCode, cancellationToken);
+            var destGlCode = dest.Equals("CorrespondentBank", StringComparison.OrdinalIgnoreCase)
+                             || dest.Equals("Bank", StringComparison.OrdinalIgnoreCase)
+                ? TreasuryGl.DefaultBankHtg
+                : TreasuryGl.Vault(till.CurrencyCode);
+            if (till.CurrencyCode == Currencies.Usd && destGlCode == TreasuryGl.DefaultBankHtg)
+                destGlCode = TreasuryGl.DefaultBankUsd;
+            var destGl = await RequireGlAsync(destGlCode, till.CurrencyCode, cancellationToken);
+            if (tillGl is null || destGl is null)
+                return Result<TillSessionDto>.Fail("internal.gl", "Compte de caisse ou de coffre introuvable.");
+            var ret = await _journals.PostAsync(new CreateJournalRequest
+            {
+                Description = $"Retour de caisse {till.CurrencyCode}",
+                CurrencyCode = till.CurrencyCode,
+                BranchId = till.BranchId,
+                Lines =
+                [
+                    new CreateJournalLineRequest { GlAccountId = destGl.Id, Debit = counted, Credit = 0m, Description = destGlCode.StartsWith("11") ? "Banque" : "Coffre" },
+                    new CreateJournalLineRequest { GlAccountId = tillGl.Id, Debit = 0m, Credit = counted, Description = "Caisse" }
+                ]
+            }, string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey + "-return", cancellationToken);
+            if (!ret.IsSuccess)
+                return Result<TillSessionDto>.Fail(ret.ErrorCode!, ret.ErrorMessage!);
+            _db.InternalCashMovements.Add(new InternalCashMovement
+            {
+                TenantId = till.TenantId,
+                BranchId = till.BranchId,
+                MovementNo = await NextInternalNoAsync(cancellationToken),
+                Direction = destGlCode.StartsWith("11") ? InternalCashDirection.TillToBank : InternalCashDirection.TillToVault,
+                Status = InternalCashStatus.Accepted,
+                CurrencyCode = till.CurrencyCode,
+                Amount = counted,
+                SourceType = CashLocationType.Till,
+                SourceId = till.Id,
+                DestinationType = destGlCode.StartsWith("11") ? CashLocationType.CorrespondentBank : CashLocationType.Vault,
+                TellerUserId = till.UserId,
+                BusinessDate = till.BusinessDate ?? _clock.TodayInPortAuPrince(),
+                Reason = CashMovementReason.CloseReturn,
+                SourceTillSessionId = till.Id,
+                Note = till.Notes,
+                BagId = string.IsNullOrWhiteSpace(request.BagId) ? null : request.BagId.Trim(),
+                ReceivedAmount = counted,
+                CreatedByUserId = _currentUser.UserId!.Value,
+                CreatedAtUtc = _clock.UtcNow,
+                AcceptedByUserId = _currentUser.UserId,
+                AcceptedAtUtc = _clock.UtcNow,
+                JournalEntryId = ret.Value!.Id
+            });
+            till.ExpectedCash = 0m;
+        }
+
+        till.Status = TillSessionStatus.Closed;
+        till.ClosedAtUtc = _clock.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
         await _audit.LogAsync(
@@ -298,6 +319,17 @@ public sealed class TellerService : ITellerService
                 return Result<InternalCashMovementDto>.Ok(MapMovement(replay));
         }
 
+        if (!string.IsNullOrWhiteSpace(request.SourceType)
+            && (request.SourceType.Equals("Shares", StringComparison.OrdinalIgnoreCase)
+                || request.SourceType.Equals("Savings", StringComparison.OrdinalIgnoreCase)
+                || request.SourceType.Equals("MemberPayment", StringComparison.OrdinalIgnoreCase)
+                || request.SourceType.Equals("Unspecified", StringComparison.OrdinalIgnoreCase)))
+            return Result<InternalCashMovementDto>.Fail("internal.location", "Les parts et l’épargne ne sont pas une provenance d’ouverture.");
+        if (!string.IsNullOrWhiteSpace(request.DestinationType)
+            && (request.DestinationType.Equals("Shares", StringComparison.OrdinalIgnoreCase)
+                || request.DestinationType.Equals("Savings", StringComparison.OrdinalIgnoreCase)))
+            return Result<InternalCashMovementDto>.Fail("internal.location", "Les parts et l’épargne ne sont pas une caisse.");
+
         if (!Enum.TryParse<InternalCashDirection>(request.Direction, ignoreCase: true, out var direction)
             || !Enum.IsDefined(direction))
             return Result<InternalCashMovementDto>.Fail(
@@ -307,7 +339,13 @@ public sealed class TellerService : ITellerService
         if (request.Amount is null)
             return Result<InternalCashMovementDto>.Fail("internal.amount", "Le montant est obligatoire.");
         var amount = MoneyAmount.Normalize(request.Amount.Value);
-        if (amount <= 0m)
+        var reason = ParseReason(request.Reason, direction, request.DestinationTillSessionId, request.DestinationTellerUserId);
+        if (reason is CashMovementReason.OpeningFloat)
+        {
+            if (amount < 0m)
+                return Result<InternalCashMovementDto>.Fail("internal.amount", "Le montant ne peut pas être négatif.");
+        }
+        else if (amount <= 0m)
             return Result<InternalCashMovementDto>.Fail("internal.amount", "Le montant doit être supérieur à zéro.");
 
         var currency = NormalizeCurrency(request.CurrencyCode);
@@ -320,6 +358,18 @@ public sealed class TellerService : ITellerService
         var tenantId = _currentUser.TenantId!.Value;
         var userId = _currentUser.UserId!.Value;
         var branchId = _currentUser.BranchId!.Value;
+
+        if (!IsManager()
+            && direction is InternalCashDirection.VaultToTill
+                or InternalCashDirection.BankToTill
+                or InternalCashDirection.ExternalToVault
+                or InternalCashDirection.ExternalToTill)
+            return Result<InternalCashMovementDto>.Fail(
+                "auth.forbidden",
+                "Le caissier ne peut pas émettre un mouvement depuis le coffre, une banque ou un financeur externe.");
+
+        if (reason is CashMovementReason.ExternalLoan or CashMovementReason.Grant && !IsManager())
+            return Result<InternalCashMovementDto>.Fail("auth.forbidden", "Seul le gérant émet un emprunt ou une subvention.");
 
         TillSession? source = null;
         TillSession? dest = null;
@@ -346,20 +396,50 @@ public sealed class TellerService : ITellerService
             return Result<InternalCashMovementDto>.Fail("internal.source", "Coffre → Caisse n’a pas de caisse source.");
         }
 
-        if (direction is InternalCashDirection.VaultToTill or InternalCashDirection.TillToTill)
+        Guid? tellerUserId = request.DestinationTellerUserId;
+        if (direction is InternalCashDirection.VaultToTill
+            or InternalCashDirection.TillToTill
+            or InternalCashDirection.BankToTill
+            or InternalCashDirection.ExternalToTill)
         {
-            if (request.DestinationTillSessionId is null)
-                return Result<InternalCashMovementDto>.Fail("internal.dest", "La caisse destination est obligatoire.");
-            dest = await _db.TillSessions.Include(t => t.User)
-                .FirstOrDefaultAsync(t => t.Id == request.DestinationTillSessionId && t.TenantId == tenantId, cancellationToken);
-            if (dest is null)
-                return Result<InternalCashMovementDto>.Fail("till.not_found", "Caisse destination introuvable.");
-            if (dest.Status != TillSessionStatus.Open)
-                return Result<InternalCashMovementDto>.Fail("till.not_open", "La caisse destination doit être ouverte.");
-            if (dest.CurrencyCode != currency)
-                return Result<InternalCashMovementDto>.Fail("internal.currency", "La devise de la caisse destination ne correspond pas.");
+            if (reason == CashMovementReason.OpeningFloat)
+            {
+                if (request.DestinationTillSessionId is not null)
+                {
+                    dest = await _db.TillSessions.Include(t => t.User)
+                        .FirstOrDefaultAsync(t => t.Id == request.DestinationTillSessionId && t.TenantId == tenantId, cancellationToken);
+                    if (dest is null)
+                        return Result<InternalCashMovementDto>.Fail("till.not_found", "Caisse destination introuvable.");
+                    tellerUserId = dest.UserId;
+                }
+                tellerUserId ??= request.DestinationTellerUserId;
+                if (tellerUserId is null)
+                    return Result<InternalCashMovementDto>.Fail("internal.dest", "Indiquez le caissier destinataire du fond de caisse.");
+                if (!IsManager() && tellerUserId == userId)
+                    return Result<InternalCashMovementDto>.Fail("auth.forbidden", "Le caissier ne peut pas s’émettre un fond depuis le coffre.");
+                var alreadyOpen = await _db.TillSessions.AnyAsync(
+                    t => t.TenantId == tenantId && t.UserId == tellerUserId && t.BranchId == branchId
+                         && t.CurrencyCode == currency && (t.Status == TillSessionStatus.Open || t.Status == TillSessionStatus.Closing),
+                    cancellationToken);
+                if (alreadyOpen)
+                    return Result<InternalCashMovementDto>.Fail("till.already_open", "Une caisse est déjà ouverte pour ce caissier.");
+            }
+            else
+            {
+                if (request.DestinationTillSessionId is null)
+                    return Result<InternalCashMovementDto>.Fail("internal.dest", "La caisse destination est obligatoire.");
+                dest = await _db.TillSessions.Include(t => t.User)
+                    .FirstOrDefaultAsync(t => t.Id == request.DestinationTillSessionId && t.TenantId == tenantId, cancellationToken);
+                if (dest is null)
+                    return Result<InternalCashMovementDto>.Fail("till.not_found", "Caisse destination introuvable.");
+                if (dest.Status != TillSessionStatus.Open)
+                    return Result<InternalCashMovementDto>.Fail("till.not_open", "La caisse destination doit être ouverte.");
+                if (dest.CurrencyCode != currency)
+                    return Result<InternalCashMovementDto>.Fail("internal.currency", "La devise de la caisse destination ne correspond pas.");
+                tellerUserId = dest.UserId;
+            }
         }
-        else if (request.DestinationTillSessionId is not null)
+        else if (request.DestinationTillSessionId is not null && reason != CashMovementReason.OpeningFloat)
         {
             return Result<InternalCashMovementDto>.Fail("internal.dest", "Caisse → Coffre n’a pas de caisse destination.");
         }
@@ -372,6 +452,7 @@ public sealed class TellerService : ITellerService
                     "Un caissier ne peut pas envoyer vers sa propre caisse.");
         }
 
+        var (sourceType, destType) = TypesFromDirection(direction);
         var movement = new InternalCashMovement
         {
             TenantId = tenantId,
@@ -381,13 +462,40 @@ public sealed class TellerService : ITellerService
             Status = InternalCashStatus.Pending,
             CurrencyCode = currency,
             Amount = amount,
+            SourceType = sourceType,
+            SourceId = direction is InternalCashDirection.BankToTill or InternalCashDirection.TillToBank
+                ? request.BankAccountId
+                : source?.Id,
+            DestinationType = destType,
+            DestinationId = dest?.Id ?? tellerUserId,
+            TellerUserId = tellerUserId,
+            BusinessDate = _clock.TodayInPortAuPrince(),
+            Reason = reason,
             SourceTillSessionId = source?.Id,
             DestinationTillSessionId = dest?.Id,
             Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
+            BagId = string.IsNullOrWhiteSpace(request.BagId) ? null : request.BagId.Trim(),
             CreatedByUserId = userId,
             CreatedAtUtc = _clock.UtcNow,
             IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim()
         };
+        foreach (var line in request.Denominations ?? [])
+        {
+            if (line.Quantity <= 0 || line.FaceValue <= 0m)
+                continue;
+            movement.Denominations.Add(new InternalCashDenomination
+            {
+                MovementId = movement.Id,
+                FaceValue = MoneyAmount.Normalize(line.FaceValue),
+                Quantity = line.Quantity
+            });
+        }
+        if (movement.Denominations.Count > 0)
+        {
+            var denomSum = MoneyAmount.Normalize(movement.Denominations.Sum(d => d.FaceValue * d.Quantity));
+            if (denomSum != amount)
+                return Result<InternalCashMovementDto>.Fail("till.count_mismatch", "Le détail des coupures doit totaliser le montant.");
+        }
         _db.InternalCashMovements.Add(movement);
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -408,23 +516,42 @@ public sealed class TellerService : ITellerService
     public async Task<Result<InternalCashMovementDto>> AcceptInternalMovementAsync(
         Guid movementId,
         string? idempotencyKey,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AcceptMovementRequest? accept = null)
     {
         var gate = RequireWriter();
         if (!gate.IsSuccess)
             return Result<InternalCashMovementDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
 
         var movement = await QueryMovements()
+            .Include(m => m.Denominations)
             .FirstOrDefaultAsync(m => m.Id == movementId && m.TenantId == _currentUser.TenantId, cancellationToken);
         if (movement is null)
             return Result<InternalCashMovementDto>.Fail("internal.not_found", "Mouvement interne introuvable.");
         if (movement.Status != InternalCashStatus.Pending)
-            return Result<InternalCashMovementDto>.Fail("internal.already_accepted", "Ce mouvement est déjà accepté.");
+            return Result<InternalCashMovementDto>.Fail("internal.already_accepted", "Ce mouvement n’est plus en attente.");
+
+        if (movement.CreatedByUserId == _currentUser.UserId)
+            return Result<InternalCashMovementDto>.Fail("internal.self_accept", "L’émetteur ne peut pas accepter son propre mouvement.");
 
         if (!CanAccept(movement))
             return Result<InternalCashMovementDto>.Fail(
                 "auth.forbidden",
-                "Seul le gérant ou le caissier destinataire peut accepter la réception.");
+                "Seul le caissier destinataire peut accepter un fond vers sa caisse. Le coffre est accepté par le gérant.");
+
+        if (movement.Reason == CashMovementReason.OpeningFloat
+            || (movement.Direction == InternalCashDirection.VaultToTill && movement.DestinationTillSessionId is null))
+        {
+            var counted = accept?.CountedAmount;
+            if (counted is null)
+                return Result<InternalCashMovementDto>.Fail("till.counted", "Le montant compté est obligatoire.");
+            var countedAmt = MoneyAmount.Normalize(counted.Value);
+            if (countedAmt != movement.Amount)
+                return Result<InternalCashMovementDto>.Fail(
+                    "till.count_mismatch",
+                    "Le montant compté doit être strictement égal au montant émis.");
+            return await AcceptOpeningFloatAsync(movement, countedAmt, idempotencyKey, cancellationToken);
+        }
 
         if (movement.Direction is InternalCashDirection.TillToVault or InternalCashDirection.TillToTill)
         {
@@ -1004,7 +1131,8 @@ public sealed class TellerService : ITellerService
     private IQueryable<InternalCashMovement> QueryMovements() =>
         _db.InternalCashMovements
             .Include(m => m.SourceTillSession)!.ThenInclude(t => t!.User)
-            .Include(m => m.DestinationTillSession)!.ThenInclude(t => t!.User);
+            .Include(m => m.DestinationTillSession)!.ThenInclude(t => t!.User)
+            .Include(m => m.Denominations);
 
     private InternalCashMovementDto MapMovement(InternalCashMovement m) =>
         new(
@@ -1022,17 +1150,429 @@ public sealed class TellerService : ITellerService
             m.CreatedAtUtc,
             m.AcceptedAtUtc,
             m.JournalEntryId,
-            CanAccept(m));
+            CanAccept(m),
+            m.Reason.ToString(),
+            m.SourceType.ToString(),
+            m.DestinationType.ToString(),
+            m.TellerUserId,
+            m.BusinessDate,
+            m.BagId,
+            m.ReceivedAmount,
+            CanReject(m));
 
     private bool CanAccept(InternalCashMovement movement)
     {
         if (movement.Status != InternalCashStatus.Pending)
             return false;
-        if (IsManager())
-            return true;
-        return movement.DestinationTillSessionId is not null
-               && movement.DestinationTillSession?.UserId == _currentUser.UserId;
+        if (movement.CreatedByUserId == _currentUser.UserId)
+            return false;
+        var destIsTill = movement.DestinationType == CashLocationType.Till
+                         || movement.Direction is InternalCashDirection.VaultToTill
+                             or InternalCashDirection.TillToTill
+                             or InternalCashDirection.BankToTill
+                             or InternalCashDirection.ExternalToTill;
+        if (destIsTill)
+            return movement.TellerUserId == _currentUser.UserId
+                   || movement.DestinationTillSession?.UserId == _currentUser.UserId;
+        return IsManager();
     }
+
+    private bool CanReject(InternalCashMovement movement) =>
+        movement.Status == InternalCashStatus.Pending
+        && (CanAccept(movement) || IsManager())
+        && movement.CreatedByUserId != _currentUser.UserId;
+
+    private Task<InternalCashMovement?> PendingOpeningAsync(string currency, CancellationToken cancellationToken) =>
+        QueryMovements().FirstOrDefaultAsync(
+            m => m.TenantId == _currentUser.TenantId
+                 && m.Status == InternalCashStatus.Pending
+                 && m.CurrencyCode == currency
+                 && m.TellerUserId == _currentUser.UserId
+                 && (m.Reason == CashMovementReason.OpeningFloat
+                     || (m.Direction == InternalCashDirection.VaultToTill && m.DestinationTillSessionId == null)),
+            cancellationToken);
+
+    public async Task<Result<IReadOnlyList<InternalCashMovementDto>>> ListPendingForTellerAsync(
+        string? currencyCode,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<IReadOnlyList<InternalCashMovementDto>>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+        var currency = NormalizeCurrency(currencyCode) ?? Currencies.Htg;
+        var items = await QueryMovements()
+            .Where(m => m.TenantId == _currentUser.TenantId
+                        && m.Status == InternalCashStatus.Pending
+                        && m.CurrencyCode == currency
+                        && m.TellerUserId == _currentUser.UserId)
+            .OrderByDescending(m => m.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+        return Result<IReadOnlyList<InternalCashMovementDto>>.Ok(items.Select(MapMovement).ToList());
+    }
+
+    public async Task<Result<IReadOnlyList<CashSourceDto>>> ListCashSourcesAsync(
+        string? currencyCode,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<IReadOnlyList<CashSourceDto>>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+
+        var currency = NormalizeCurrency(currencyCode) ?? Currencies.Htg;
+        var dest = await CurrentOpenTillAsync(currency, cancellationToken);
+        var sources = new List<CashSourceDto>();
+
+        var vaultGl = await RequireGlAsync(TreasuryGl.Vault(currency), currency, cancellationToken);
+        if (vaultGl is not null)
+        {
+            var vaultBal = await GlBalanceAsync(vaultGl.Id, cancellationToken);
+            if (vaultBal > 0m)
+                sources.Add(new CashSourceDto("Vault", null, "Coffre", vaultBal, currency));
+        }
+
+        var tills = await _db.TillSessions.AsNoTracking()
+            .Include(t => t.User)
+            .Where(t => t.TenantId == _currentUser.TenantId
+                        && t.BranchId == _currentUser.BranchId
+                        && t.CurrencyCode == currency
+                        && t.Status == TillSessionStatus.Open
+                        && t.ExpectedCash > 0m)
+            .OrderBy(t => t.User!.FullName)
+            .ToListAsync(cancellationToken);
+        foreach (var till in tills)
+        {
+            if (dest is not null && till.Id == dest.Id)
+                continue;
+            sources.Add(new CashSourceDto(
+                "Till",
+                till.Id,
+                string.IsNullOrWhiteSpace(till.User?.FullName) ? "Caisse" : till.User!.FullName,
+                till.ExpectedCash,
+                currency));
+        }
+
+        return Result<IReadOnlyList<CashSourceDto>>.Ok(sources);
+    }
+
+    public async Task<Result<InternalCashMovementDto>> FundDrawerAsync(
+        FundDrawerRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = RequireWriter();
+        if (!gate.IsSuccess)
+            return Result<InternalCashMovementDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
+
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            var replay = await QueryMovements().FirstOrDefaultAsync(
+                m => m.TenantId == _currentUser.TenantId && m.IdempotencyKey == idempotencyKey.Trim(),
+                cancellationToken);
+            if (replay is not null)
+                return Result<InternalCashMovementDto>.Ok(MapMovement(replay));
+        }
+
+        var amount = MoneyAmount.Normalize(request.Amount);
+        if (amount <= 0m)
+            return Result<InternalCashMovementDto>.Fail("internal.amount", "Le montant doit être supérieur à zéro.");
+
+        var currency = NormalizeCurrency(request.CurrencyCode) ?? Currencies.Htg;
+        var dest = await CurrentOpenTillAsync(currency, cancellationToken);
+        if (dest is null)
+            return Result<InternalCashMovementDto>.Fail("till.not_open", "Aucune caisse ouverte pour cet utilisateur.");
+
+        var kind = (request.SourceKind ?? "Vault").Trim();
+        var isVault = kind.Equals("Vault", StringComparison.OrdinalIgnoreCase);
+        var tenantId = _currentUser.TenantId!.Value;
+        var userId = _currentUser.UserId!.Value;
+        var note = string.IsNullOrWhiteSpace(request.Note)
+            ? (request.LoanId is { } loanId
+                ? $"Alimentation tiroir pour décaissement prêt #{loanId.ToString("N")[..8]}"
+                : "Alimentation tiroir")
+            : request.Note.Trim();
+        if (note.Length > 512)
+            return Result<InternalCashMovementDto>.Fail("internal.note", "La note ne peut pas dépasser 512 caractères.");
+
+        TillSession? source = null;
+        InternalCashDirection direction;
+        if (isVault)
+        {
+            direction = InternalCashDirection.VaultToTill;
+            var vaultGl = await RequireGlAsync(TreasuryGl.Vault(currency), currency, cancellationToken);
+            if (vaultGl is null)
+                return Result<InternalCashMovementDto>.Fail("internal.gl", "Compte de coffre introuvable.");
+            var vaultBal = await GlBalanceAsync(vaultGl.Id, cancellationToken);
+            if (vaultBal < amount)
+                return Result<InternalCashMovementDto>.Fail("internal.insufficient_vault", "Solde du coffre insuffisant.");
+        }
+        else
+        {
+            if (!IsManager())
+                return Result<InternalCashMovementDto>.Fail(
+                    "auth.forbidden",
+                    "Seul le gérant peut virer depuis une autre caisse.");
+            if (request.SourceTillSessionId is null)
+                return Result<InternalCashMovementDto>.Fail("internal.source", "La caisse source est obligatoire.");
+            source = await _db.TillSessions.Include(t => t.User)
+                .FirstOrDefaultAsync(
+                    t => t.Id == request.SourceTillSessionId && t.TenantId == tenantId,
+                    cancellationToken);
+            if (source is null)
+                return Result<InternalCashMovementDto>.Fail("till.not_found", "Caisse source introuvable.");
+            if (source.Status != TillSessionStatus.Open)
+                return Result<InternalCashMovementDto>.Fail("till.not_open", "La caisse source doit être ouverte.");
+            if (source.Id == dest.Id)
+                return Result<InternalCashMovementDto>.Fail("internal.same_till", "Un caissier ne peut pas envoyer vers sa propre caisse.");
+            if (source.ExpectedCash < amount)
+                return Result<InternalCashMovementDto>.Fail("internal.insufficient", "Solde de caisse source insuffisant.");
+            direction = InternalCashDirection.TillToTill;
+        }
+
+        var tillGl = await RequireGlAsync(TreasuryGl.Till(currency), currency, cancellationToken);
+        var vaultGlPost = await RequireGlAsync(TreasuryGl.Vault(currency), currency, cancellationToken);
+        if (tillGl is null)
+            return Result<InternalCashMovementDto>.Fail("internal.gl", "Compte de caisse introuvable.");
+        if (isVault && vaultGlPost is null)
+            return Result<InternalCashMovementDto>.Fail("internal.gl", "Compte de coffre introuvable.");
+
+        List<CreateJournalLineRequest> lines;
+        string description;
+        if (isVault)
+        {
+            description = $"Alimentation tiroir {dest.Id.ToString("N")[..8]}";
+            lines =
+            [
+                new CreateJournalLineRequest { GlAccountId = tillGl.Id, Debit = amount, Credit = 0m, Description = "Caisse" },
+                new CreateJournalLineRequest { GlAccountId = vaultGlPost!.Id, Debit = 0m, Credit = amount, Description = "Coffre" }
+            ];
+        }
+        else
+        {
+            description = $"Caisse → Caisse alimentation tiroir";
+            lines =
+            [
+                new CreateJournalLineRequest { GlAccountId = tillGl.Id, Debit = amount, Credit = 0m, Description = "Caisse B" },
+                new CreateJournalLineRequest { GlAccountId = tillGl.Id, Debit = 0m, Credit = amount, Description = "Caisse A" }
+            ];
+        }
+
+        var journal = await _journals.PostAsync(new CreateJournalRequest
+        {
+            Description = description,
+            CurrencyCode = currency,
+            BranchId = dest.BranchId,
+            Lines = lines
+        }, idempotencyKey, cancellationToken);
+        if (!journal.IsSuccess)
+            return Result<InternalCashMovementDto>.Fail(journal.ErrorCode!, journal.ErrorMessage!);
+
+        if (source is not null)
+            source.ExpectedCash = MoneyAmount.Normalize(source.ExpectedCash - amount);
+        dest.ExpectedCash = MoneyAmount.Normalize(dest.ExpectedCash + amount);
+        if (dest.ExpectedCash < 0m)
+            return Result<InternalCashMovementDto>.Fail("internal.negative", "Le tiroir ne peut pas passer en négatif.");
+
+        var (sourceType, destType) = TypesFromDirection(direction);
+        var movement = new InternalCashMovement
+        {
+            TenantId = tenantId,
+            BranchId = dest.BranchId,
+            MovementNo = await NextInternalNoAsync(cancellationToken),
+            Direction = direction,
+            Status = InternalCashStatus.Accepted,
+            CurrencyCode = currency,
+            Amount = amount,
+            SourceType = sourceType,
+            SourceId = source?.Id,
+            DestinationType = destType,
+            DestinationId = dest.Id,
+            TellerUserId = dest.UserId,
+            BusinessDate = _clock.TodayInPortAuPrince(),
+            Reason = CashMovementReason.Refill,
+            SourceTillSessionId = source?.Id,
+            DestinationTillSessionId = dest.Id,
+            Note = note,
+            CreatedByUserId = userId,
+            CreatedAtUtc = _clock.UtcNow,
+            AcceptedByUserId = userId,
+            AcceptedAtUtc = _clock.UtcNow,
+            JournalEntryId = journal.Value!.Id,
+            IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim()
+        };
+        _db.InternalCashMovements.Add(movement);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Till.FundedForDisbursement",
+            nameof(InternalCashMovement),
+            movement.Id,
+            new { movement.MovementNo, movement.Amount, dest.ExpectedCash, request.LoanId, source = kind },
+            tenantId,
+            userId,
+            cancellationToken: cancellationToken);
+
+        movement.SourceTillSession = source;
+        movement.DestinationTillSession = dest;
+        return Result<InternalCashMovementDto>.Ok(MapMovement(movement));
+    }
+
+    public async Task<Result<InternalCashMovementDto>> RejectInternalMovementAsync(
+        Guid movementId,
+        RejectMovementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = RequireWriter();
+        if (!gate.IsSuccess)
+            return Result<InternalCashMovementDto>.Fail(gate.ErrorCode!, gate.ErrorMessage!);
+        var movement = await QueryMovements()
+            .FirstOrDefaultAsync(m => m.Id == movementId && m.TenantId == _currentUser.TenantId, cancellationToken);
+        if (movement is null)
+            return Result<InternalCashMovementDto>.Fail("internal.not_found", "Mouvement interne introuvable.");
+        if (movement.Status != InternalCashStatus.Pending)
+            return Result<InternalCashMovementDto>.Fail("internal.already_accepted", "Ce mouvement n’est plus en attente.");
+        if (movement.CreatedByUserId == _currentUser.UserId)
+            return Result<InternalCashMovementDto>.Fail("internal.self_accept", "L’émetteur ne peut pas rejeter son propre mouvement.");
+        if (!CanReject(movement))
+            return Result<InternalCashMovementDto>.Fail("auth.forbidden", "Vous ne pouvez pas rejeter ce mouvement.");
+        var why = (request.Reason ?? "").Trim();
+        if (why.Length == 0)
+            return Result<InternalCashMovementDto>.Fail("internal.reject_reason", "Indiquez la raison du rejet.");
+        movement.Status = InternalCashStatus.Rejected;
+        movement.RejectedByUserId = _currentUser.UserId;
+        movement.RejectedAtUtc = _clock.UtcNow;
+        movement.Note = string.IsNullOrWhiteSpace(movement.Note) ? why : movement.Note + " | Rejet : " + why;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Till.InternalRejected",
+            nameof(InternalCashMovement),
+            movement.Id,
+            new { movement.MovementNo, why },
+            movement.TenantId,
+            _currentUser.UserId,
+            cancellationToken: cancellationToken);
+        return Result<InternalCashMovementDto>.Ok(MapMovement(movement));
+    }
+
+    private async Task<Result<InternalCashMovementDto>> AcceptOpeningFloatAsync(
+        InternalCashMovement movement,
+        decimal counted,
+        string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var tellerId = movement.TellerUserId ?? _currentUser.UserId!.Value;
+        if (tellerId != _currentUser.UserId)
+            return Result<InternalCashMovementDto>.Fail("auth.forbidden", "Seul le caissier destinataire accepte le fond de caisse.");
+
+        var openExists = await _db.TillSessions.AnyAsync(
+            t => t.TenantId == movement.TenantId
+                 && t.UserId == tellerId
+                 && t.BranchId == movement.BranchId
+                 && t.CurrencyCode == movement.CurrencyCode
+                 && (t.Status == TillSessionStatus.Open || t.Status == TillSessionStatus.Closing),
+            cancellationToken);
+        if (openExists)
+            return Result<InternalCashMovementDto>.Fail("till.already_open", "Une caisse est déjà ouverte pour cet utilisateur.");
+
+        var tillGl = await RequireGlAsync(TreasuryGl.Till(movement.CurrencyCode), movement.CurrencyCode, cancellationToken);
+        var vaultGl = await RequireGlAsync(TreasuryGl.Vault(movement.CurrencyCode), movement.CurrencyCode, cancellationToken);
+        if (tillGl is null || vaultGl is null)
+            return Result<InternalCashMovementDto>.Fail("internal.gl", "Compte de caisse ou de coffre introuvable.");
+        if (movement.Amount > 0m)
+        {
+            var vaultBal = await GlBalanceAsync(vaultGl.Id, cancellationToken);
+            if (vaultBal < movement.Amount)
+                return Result<InternalCashMovementDto>.Fail("internal.insufficient_vault", "Solde du coffre insuffisant.");
+        }
+
+        Guid? journalId = null;
+        if (movement.Amount > 0m)
+        {
+            var journal = await _journals.PostAsync(new CreateJournalRequest
+            {
+                Description = $"Fond d’ouverture {movement.MovementNo}",
+                CurrencyCode = movement.CurrencyCode,
+                BranchId = movement.BranchId,
+                Lines =
+                [
+                    new CreateJournalLineRequest { GlAccountId = tillGl.Id, Debit = movement.Amount, Credit = 0m, Description = "Caisse" },
+                    new CreateJournalLineRequest { GlAccountId = vaultGl.Id, Debit = 0m, Credit = movement.Amount, Description = "Coffre" }
+                ]
+            }, idempotencyKey, cancellationToken);
+            if (!journal.IsSuccess)
+                return Result<InternalCashMovementDto>.Fail(journal.ErrorCode!, journal.ErrorMessage!);
+            journalId = journal.Value!.Id;
+        }
+
+        var till = new TillSession
+        {
+            TenantId = movement.TenantId,
+            BranchId = movement.BranchId,
+            UserId = tellerId,
+            CurrencyCode = movement.CurrencyCode,
+            Status = TillSessionStatus.Open,
+            OpeningFloat = movement.Amount,
+            OpeningMovementId = movement.Id,
+            BusinessDate = movement.BusinessDate ?? _clock.TodayInPortAuPrince(),
+            ExpectedCash = movement.Amount,
+            OpenedAtUtc = _clock.UtcNow
+        };
+        _db.TillSessions.Add(till);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        movement.Status = InternalCashStatus.Accepted;
+        movement.AcceptedByUserId = _currentUser.UserId;
+        movement.AcceptedAtUtc = _clock.UtcNow;
+        movement.ReceivedAmount = counted;
+        movement.DestinationTillSessionId = till.Id;
+        movement.DestinationId = till.Id;
+        movement.JournalEntryId = journalId;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.LogAsync(
+            "Till.Opened",
+            nameof(TillSession),
+            till.Id,
+            new { till.CurrencyCode, till.OpeningFloat, movement.MovementNo },
+            till.TenantId,
+            tellerId,
+            cancellationToken: cancellationToken);
+        movement.DestinationTillSession = till;
+        return Result<InternalCashMovementDto>.Ok(MapMovement(movement));
+    }
+
+    private static CashMovementReason ParseReason(
+        string? raw,
+        InternalCashDirection direction,
+        Guid? destTillId,
+        Guid? destTellerId)
+    {
+        if (!string.IsNullOrWhiteSpace(raw) && Enum.TryParse<CashMovementReason>(raw, true, out var parsed))
+            return parsed;
+        if (direction == InternalCashDirection.VaultToTill && destTillId is null)
+            return CashMovementReason.OpeningFloat;
+        if (direction == InternalCashDirection.VaultToTill)
+            return destTellerId is not null && destTillId is null
+                ? CashMovementReason.OpeningFloat
+                : CashMovementReason.Refill;
+        if (direction == InternalCashDirection.TillToVault)
+            return CashMovementReason.Skim;
+        if (direction == InternalCashDirection.TillToTill)
+            return CashMovementReason.Handover;
+        if (direction is InternalCashDirection.ExternalToVault or InternalCashDirection.ExternalToTill)
+            return CashMovementReason.Grant;
+        return CashMovementReason.Refill;
+    }
+
+    private static (CashLocationType Source, CashLocationType Dest) TypesFromDirection(InternalCashDirection direction) =>
+        direction switch
+        {
+            InternalCashDirection.VaultToTill => (CashLocationType.Vault, CashLocationType.Till),
+            InternalCashDirection.TillToVault => (CashLocationType.Till, CashLocationType.Vault),
+            InternalCashDirection.TillToTill => (CashLocationType.Till, CashLocationType.Till),
+            InternalCashDirection.BankToTill => (CashLocationType.CorrespondentBank, CashLocationType.Till),
+            InternalCashDirection.TillToBank => (CashLocationType.Till, CashLocationType.CorrespondentBank),
+            InternalCashDirection.ExternalToVault => (CashLocationType.ExternalPayer, CashLocationType.Vault),
+            InternalCashDirection.ExternalToTill => (CashLocationType.ExternalPayer, CashLocationType.Till),
+            _ => (CashLocationType.Vault, CashLocationType.Till)
+        };
 
     private bool IsManager() =>
         _currentUser.Roles.Any(r => r is RoleNames.Admin or RoleNames.Gerant);
@@ -1057,6 +1597,15 @@ public sealed class TellerService : ITellerService
         await _db.SaveChangesAsync(cancellationToken);
         return $"MI-{sequence.LastValue:000000}";
     }
+
+    private Task<TillSession?> CurrentOpenTillAsync(string currency, CancellationToken cancellationToken) =>
+        _db.TillSessions.FirstOrDefaultAsync(
+            t => t.TenantId == _currentUser.TenantId
+                 && t.UserId == _currentUser.UserId
+                 && t.BranchId == _currentUser.BranchId
+                 && t.CurrencyCode == currency
+                 && t.Status == TillSessionStatus.Open,
+            cancellationToken);
 
     private Task<GlAccount?> RequireGlAsync(string code, string currency, CancellationToken cancellationToken) =>
         _db.GlAccounts.FirstOrDefaultAsync(

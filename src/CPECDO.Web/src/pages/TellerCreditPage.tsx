@@ -6,7 +6,16 @@ import { fetchMember360, searchMembers, type KycDocument, type MemberSummary } f
 import { KycPieces } from "../components/KycPieces";
 import { fetchMemberSavings, type SavingsAccount } from "../api/savings";
 import { fetchCurrentTill, type TillSession } from "../api/teller";
-import { disburseLoan, fetchLoans, repayLoan, type Loan, type LoanReceipt } from "../api/loans";
+import {
+  disburseLoan,
+  fetchLoans,
+  isTillCashShortfall,
+  repayLoan,
+  type Loan,
+  type LoanReceipt,
+  type TillCashShortfall
+} from "../api/loans";
+import { DisburseShortageDialog } from "../components/DisburseShortageDialog";
 import { formatMoney } from "../money";
 
 function todayIso() {
@@ -94,6 +103,7 @@ export function TellerCreditPage() {
   const [confirmPay, setConfirmPay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [shortage, setShortage] = useState<TillCashShortfall | null>(null);
 
   const selected = useMemo(() => loans.find((l) => l.id === loanId) ?? null, [loans, loanId]);
   const figures = selected ? balances(selected) : null;
@@ -150,19 +160,30 @@ export function TellerCreditPage() {
     }
   }
 
-  async function onDisburse(event: FormEvent) {
-    event.preventDefault();
+  async function attemptDisburse() {
     if (!selected || selected.status !== "Approved") return;
     setBusy(true);
     setError(null);
     try {
       const next = await disburseLoan(selected.id, savingsAccountId || undefined);
       setLoans((current) => current.map((l) => (l.id === next.id ? next : l)));
+      setShortage(null);
+      const tillNext = await fetchCurrentTill(selected.currencyCode);
+      setTill(tillNext);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("teller.error"));
+      if (isTillCashShortfall(err)) {
+        setShortage(err.shortfall);
+      } else {
+        setError(err instanceof Error ? err.message : t("teller.error"));
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onDisburse(event: FormEvent) {
+    event.preventDefault();
+    await attemptDisburse();
   }
 
   async function onCollect(event: FormEvent) {
@@ -281,16 +302,52 @@ export function TellerCreditPage() {
                     <strong>{t(`loans.status.${selected.status}`)}</strong>
                   </article>
                   <article>
+                    <span>{t("loans.remainingBalanceDue")}</span>
+                    <strong className="tabular-nums">
+                      {formatMoney(
+                        selected.status === "PaidOff" || selected.status === "WrittenOff"
+                          ? 0
+                          : selected.remainingBalanceDue ?? figures.remaining,
+                        selected.currencyCode
+                      )}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>{t("loans.originalAmount")}</span>
+                    <strong className="tabular-nums">{formatMoney(selected.principal, selected.currencyCode)}</strong>
+                  </article>
+                  <article>
+                    <span>{t("loans.totalDisbursed")}</span>
+                    <strong className="tabular-nums">
+                      {formatMoney(
+                        (selected.cashDisbursedAmount ?? 0) + (selected.savingsDisbursedAmount ?? 0),
+                        selected.currencyCode
+                      )}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>{t("loans.totalRepaid")}</span>
+                    <strong className="tabular-nums">{formatMoney(selected.totalRepaid ?? 0, selected.currencyCode)}</strong>
+                  </article>
+                  <article>
+                    <span>{t("loans.nextPayment")}</span>
+                    <strong className="tabular-nums">
+                      {selected.nextPaymentAmount == null
+                        ? "—"
+                        : formatMoney(selected.nextPaymentAmount, selected.currencyCode)}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>{t("loans.nextDueDate")}</span>
+                    <strong>{selected.nextPaymentDueDate ?? "—"}</strong>
+                  </article>
+                  <article>
                     <span>{t("teller.dueToday")}</span>
                     <strong>{formatMoney(figures.dueToday, selected.currencyCode)}</strong>
                   </article>
                   <article>
                     <span>{t("teller.arrears")}</span>
                     <strong>{formatMoney(figures.arrears, selected.currencyCode)}</strong>
-                  </article>
-                  <article>
-                    <span>{t("loans.remaining")}</span>
-                    <strong>{formatMoney(figures.remaining, selected.currencyCode)}</strong>
                   </article>
                 </section>
               ) : null}
@@ -315,6 +372,17 @@ export function TellerCreditPage() {
                     {busy ? t("loans.saving") : t("loans.disburse")}
                   </button>
                 </form>
+              ) : null}
+              {shortage ? (
+                <DisburseShortageDialog
+                  shortfall={shortage}
+                  onCancel={() => setShortage(null)}
+                  onFunded={async () => {
+                    const tillNext = await fetchCurrentTill(shortage.currencyCode);
+                    setTill(tillNext);
+                    await attemptDisburse();
+                  }}
+                />
               ) : null}
 
               {!isDisburse && selected?.status === "Active" && canCollect ? (

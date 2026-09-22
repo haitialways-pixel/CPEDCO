@@ -94,7 +94,18 @@ public sealed record LivretLineDto(
     decimal Debit,
     decimal Credit,
     decimal RunningBalance,
-    string CashierName);
+    string CashierName,
+    Guid? EntryId = null);
+
+public sealed record LivretPrintPreviewDto(
+    Guid AccountId,
+    string CurrencyCode,
+    IReadOnlyList<LivretLineDto> Lines);
+
+public sealed class ConfirmLivretPrintRequest
+{
+    public List<Guid> EntryIds { get; set; } = [];
+}
 
 public sealed record LivretDto(
     Guid AccountId,

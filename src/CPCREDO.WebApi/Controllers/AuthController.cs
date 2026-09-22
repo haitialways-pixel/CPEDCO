@@ -27,7 +27,12 @@ public sealed class AuthController : ControllerBase
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
         var result = await _auth.LoginAsync(request, ip, cancellationToken);
         if (!result.IsSuccess)
-            return Unauthorized(new { code = result.ErrorCode, error = result.ErrorMessage });
+        {
+            var body = new { code = result.ErrorCode, error = result.ErrorMessage };
+            if (result.ErrorCode == "SESSION_ALREADY_ACTIVE")
+                return Conflict(body);
+            return Unauthorized(body);
+        }
 
         return Ok(result.Value);
     }

@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Identity;
 using CPCREDO.Domain.Tenancy;
+using CPCREDO.Application.Identity;
 using CPCREDO.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
@@ -41,6 +42,7 @@ public sealed class AuthzWebFactory : WebApplicationFactory<Program>
     public async Task<string> LoginCaissierAsync(HttpClient client)
     {
         Seed();
+        Services.GetRequiredService<IStaffSessionStore>().RevokeUser(SeedGuids.CaissierUserId);
         using var response = await client.PostAsJsonAsync("/api/auth/login", new { username = "caissier", password = "Caissier!1234" });
         response.EnsureSuccessStatusCode();
         using var doc = await System.Text.Json.JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
@@ -50,6 +52,7 @@ public sealed class AuthzWebFactory : WebApplicationFactory<Program>
     public async Task<string> LoginServiceClientAsync(HttpClient client)
     {
         Seed();
+        Services.GetRequiredService<IStaffSessionStore>().RevokeUser(Guid.Parse("0c0ec0de-0001-4000-a000-000000000013"));
         using var response = await client.PostAsJsonAsync("/api/auth/login", new { username = "service", password = "Service!1234" });
         response.EnsureSuccessStatusCode();
         using var doc = await System.Text.Json.JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());

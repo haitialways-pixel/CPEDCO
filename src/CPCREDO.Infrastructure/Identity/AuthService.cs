@@ -6,6 +6,7 @@ using CPCREDO.Domain.Identity;
 using CPCREDO.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace CPCREDO.Infrastructure.Identity;
 
@@ -22,6 +23,7 @@ public sealed class AuthService : IAuthService
     private readonly IStaffSessionStore _sessions;
     private readonly IMfaChallengeStore _mfa;
     private readonly TotpProtector _totp;
+    private readonly JwtOptions _jwt;
     private readonly PasswordHasher<User> _hasher = new();
 
     public AuthService(
@@ -32,7 +34,8 @@ public sealed class AuthService : IAuthService
         IInstitutionPublicService institution,
         IStaffSessionStore sessions,
         IMfaChallengeStore mfa,
-        TotpProtector totp)
+        TotpProtector totp,
+        IOptions<JwtOptions> jwt)
     {
         _db = db;
         _tokens = tokens;
@@ -42,6 +45,7 @@ public sealed class AuthService : IAuthService
         _sessions = sessions;
         _mfa = mfa;
         _totp = totp;
+        _jwt = jwt.Value;
     }
 
     public async Task<Result<LoginResponse>> LoginAsync(
@@ -137,6 +141,10 @@ public sealed class AuthService : IAuthService
                 MfaSetup: setup));
         }
 
+        var blocked = EnsureSingleSession(user.Id);
+        if (blocked is not null)
+            return blocked;
+
         user.LastLoginAtUtc = _clock.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
         return Result<LoginResponse>.Ok(await IssueFullSessionAsync(user, roles, ipAddress, cancellationToken));
@@ -191,6 +199,9 @@ public sealed class AuthService : IAuthService
         }
 
         user.LastTotpTimestep = timestep;
+        var blocked = EnsureSingleSession(user.Id);
+        if (blocked is not null)
+            return blocked;
         user.LastLoginAtUtc = _clock.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
         _mfa.Consume(ticket);
@@ -198,6 +209,16 @@ public sealed class AuthService : IAuthService
         var roles = user.UserRoles.Select(ur => ur.Role!).Where(r => r is not null).ToList();
         await _audit.LogAsync("Mfa.Verified", nameof(User), user.Id, new { user.Username }, user.TenantId, user.Id, ipAddress, cancellationToken);
         return Result<LoginResponse>.Ok(await IssueFullSessionAsync(user, roles, ipAddress, cancellationToken));
+    }
+
+    private Result<LoginResponse>? EnsureSingleSession(Guid userId)
+    {
+        var idle = TimeSpan.FromMinutes(Math.Max(1, _jwt.IdleMinutes));
+        if (_sessions.HasActive(userId, _clock.UtcNow, idle))
+            return Result<LoginResponse>.Fail(
+                "SESSION_ALREADY_ACTIVE",
+                "Cet utilisateur a déjà une session ouverte.");
+        return null;
     }
 
     private async Task<LoginResponse> IssueFullSessionAsync(

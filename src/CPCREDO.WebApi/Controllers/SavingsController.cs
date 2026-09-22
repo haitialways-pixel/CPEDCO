@@ -85,6 +85,32 @@ public sealed class SavingsController : ControllerBase
         return File(result.Value!.Content, "application/pdf", result.Value.FileName);
     }
 
+    [HttpGet("accounts/{accountId:guid}/livret")]
+    [Authorize(Policy = "CanLivret")]
+    [ProducesResponseType(typeof(LivretPrintPreviewDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<LivretPrintPreviewDto>> GetUnprintedLivret(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _savings.GetUnprintedLivretAsync(accountId, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("accounts/{accountId:guid}/livret/confirm")]
+    [Authorize(Policy = "CanLivret")]
+    [ProducesResponseType(typeof(LivretPrintPreviewDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<LivretPrintPreviewDto>> ConfirmLivret(
+        Guid accountId,
+        [FromBody] ConfirmLivretPrintRequest? request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _savings.ConfirmLivretPrintAsync(
+            accountId,
+            request ?? new ConfirmLivretPrintRequest(),
+            cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpPost("accounts/{accountId:guid}/livret.pdf")]
     [Authorize(Policy = "CanLivret")]
     [Produces("application/pdf")]

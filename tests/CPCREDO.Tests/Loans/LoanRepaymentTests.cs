@@ -75,7 +75,7 @@ public sealed class LoanRepaymentTests
         using var h = new LoanHarness();
         var loan = await DisburseAsync(h, commercial: "Court terme");
         h.AsCaissier();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
 
         var repaid = await h.Loans.RepayAsync(loan.Id, new RepayLoanRequest { Amount = 100m }, "rp-100");
         Assert.True(repaid.IsSuccess, repaid.ErrorMessage);
@@ -113,7 +113,7 @@ public sealed class LoanRepaymentTests
         Assert.Equal(50m, after.Value.Schedule.Installments[0].PenaltyDue);
 
         h.AsCaissier();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
         var repaid = await h.Loans.RepayAsync(loan.Id, new RepayLoanRequest { Amount = 200m }, "rp-pen");
         Assert.True(repaid.IsSuccess, repaid.ErrorMessage);
         Assert.Equal(50m, repaid.Value!.Receipt.Penalty);
@@ -150,7 +150,7 @@ public sealed class LoanRepaymentTests
         using var h = new LoanHarness();
         var loan = await DisburseAsync(h);
         h.AsGerant();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
         var repaid = await h.Loans.RepayAsync(
             loan.Id,
             new RepayLoanRequest { Amount = 100m, CurrencyCode = "HTG" },
@@ -176,7 +176,7 @@ public sealed class LoanRepaymentTests
         using var h = new LoanHarness();
         var loan = await DisburseAsync(h);
         h.AsCaissier();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
         var failed = await h.Loans.RepayAsync(
             loan.Id,
             new RepayLoanRequest { Amount = 100m, CurrencyCode = "USD" },
@@ -190,7 +190,7 @@ public sealed class LoanRepaymentTests
         using var h = new LoanHarness();
         var loan = await DisburseAsync(h);
         h.AsCaissier();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
         var repaid = await h.Loans.RepayAsync(loan.Id, new RepayLoanRequest { Amount = 500m }, "rp-partial");
         Assert.True(repaid.IsSuccess, repaid.ErrorMessage);
         Assert.Equal(nameof(LoanStatus.Active), repaid.Value!.Loan.Status);
@@ -223,7 +223,7 @@ public sealed class LoanRepaymentTests
         h.AsGerant();
         await h.Loans.ApproveAsync(draft.Value.Id);
         h.AsCaissier();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        await h.OpenTillAsync(50_000m);
         var savings = await h.Savings.OpenAccountAsync(h.MemberId, SeedGuids.SavingsProductHtg);
         var disbursed = await h.Loans.DisburseAsync(
             draft.Value.Id,

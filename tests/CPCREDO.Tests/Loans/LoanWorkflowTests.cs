@@ -1,3 +1,4 @@
+using CPCREDO.Application.Accounting;
 using CPCREDO.Application.Loans;
 using CPCREDO.Application.Teller;
 using CPCREDO.Domain.Accounting;
@@ -248,7 +249,9 @@ internal sealed class LoanHarness : IDisposable
             });
         Db.GlAccounts.AddRange(
             Gl("1010", GlAccountType.Asset, NormalBalance.Debit),
+            Gl("1030", GlAccountType.Asset, NormalBalance.Debit),
             Gl("1210", GlAccountType.Asset, NormalBalance.Debit),
+            Gl("3010", GlAccountType.Equity, NormalBalance.Credit),
             Gl("2010", GlAccountType.Liability, NormalBalance.Credit),
             Gl("4010", GlAccountType.Income, NormalBalance.Credit),
             Gl("4020", GlAccountType.Income, NormalBalance.Credit));
@@ -276,10 +279,12 @@ internal sealed class LoanHarness : IDisposable
         Loans = new LoanService(Db, User, clock, audit, journals);
         Savings = new SavingsService(Db, User, clock, audit);
         Teller = new TellerService(Db, User, clock, journals, audit);
+        Journals = journals;
     }
 
     public SavingsService Savings { get; }
     public TellerService Teller { get; }
+    public JournalService Journals { get; }
 
     public void AsAdmin()
     {
@@ -307,6 +312,50 @@ internal sealed class LoanHarness : IDisposable
         User.UserId = SeedGuids.CaissierUserId;
         User.Username = "caissier";
         User.Roles = [RoleNames.Caissier];
+    }
+
+    public async Task<CPCREDO.Application.Common.Result<TillSessionDto>> OpenTillAsync(decimal openingFloat = 50_000m)
+    {
+        var tellerId = User.UserId ?? SeedGuids.CaissierUserId;
+        var roles = User.Roles;
+        if (openingFloat > 0m)
+        {
+            AsAdmin();
+            var fund = await new JournalService(Db, User, new FixedClock(), new AuditLogger(Db, new FixedClock(), User))
+                .PostAsync(new CreateJournalRequest
+                {
+                    Description = "Alimentation coffre",
+                    CurrencyCode = Currencies.Htg,
+                    Lines =
+                    [
+                        new CreateJournalLineRequest { GlAccountId = SeedGuids.Gl("1030"), Debit = openingFloat + 1, Credit = 0m },
+                        new CreateJournalLineRequest { GlAccountId = SeedGuids.Gl("3010"), Debit = 0m, Credit = openingFloat + 1 }
+                    ]
+                }, "fund-loan-" + Guid.NewGuid().ToString("N")[..8]);
+            Assert.True(fund.IsSuccess, fund.ErrorMessage);
+        }
+        if (tellerId == SeedGuids.GerantUserId)
+            AsAdmin();
+        else
+            AsGerant();
+        var issued = await Teller.CreateInternalMovementAsync(
+            new CreateInternalCashRequest
+            {
+                Direction = "VaultToTill",
+                Reason = "OpeningFloat",
+                Amount = openingFloat,
+                DestinationTellerUserId = tellerId
+            },
+            "loan-open-" + Guid.NewGuid().ToString("N")[..8]);
+        Assert.True(issued.IsSuccess, issued.ErrorMessage);
+        User.UserId = tellerId;
+        User.Roles = roles.Count > 0 ? roles : [RoleNames.Caissier];
+        var accepted = await Teller.AcceptInternalMovementAsync(
+            issued.Value!.Id,
+            "loan-acc-" + Guid.NewGuid().ToString("N")[..8],
+            accept: new AcceptMovementRequest { CountedAmount = openingFloat });
+        Assert.True(accepted.IsSuccess, accepted.ErrorMessage);
+        return await Teller.GetCurrentAsync(Currencies.Htg);
     }
 
     private static GlAccount Gl(string code, GlAccountType type, NormalBalance nb) => new()

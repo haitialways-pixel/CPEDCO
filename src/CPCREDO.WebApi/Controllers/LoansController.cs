@@ -167,6 +167,8 @@ public sealed class LoansController : ControllerBase
     {
         if (result.IsSuccess)
             return Ok(result.Value);
+        if (result.ErrorCode == "till.insufficient_cash")
+            return Conflict(result.Details ?? new { code = result.ErrorCode, error = result.ErrorMessage });
         var body = new { code = result.ErrorCode, error = result.ErrorMessage };
         return result.ErrorCode switch
         {

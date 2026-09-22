@@ -5,14 +5,21 @@ import { useAuth } from "../auth/AuthContext";
 import { fetchMember360, searchMembers, type KycDocument, type Member360, type MemberSummary } from "../api/members";
 import { KycPieces } from "../components/KycPieces";
 import { MemberAccountsPanel } from "../components/MemberAccountsPanel";
-import { downloadLivretPdf, fetchMemberSavings, openMemberAccount, type SavingsAccount } from "../api/savings";
+import {
+  downloadLivretPdf,
+  fetchMemberSavings,
+  LivretEmptyError,
+  openMemberAccount,
+  printUnprintedLivret,
+  type SavingsAccount
+} from "../api/savings";
 import {
   acceptInternalMovement,
   closeTill,
   collectMixed,
   fetchCurrentTill,
   fetchInternalMovements,
-  openTill,
+  fetchPendingMovements,
   postCash,
   type CashReceipt,
   type InternalCashMovement,
@@ -130,14 +137,17 @@ export function TellerPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [incoming, setIncoming] = useState<InternalCashMovement[]>([]);
+  const [pendingOpen, setPendingOpen] = useState<InternalCashMovement[]>([]);
 
   async function refreshTill() {
     const current = await fetchCurrentTill("HTG");
     setTill(current);
     if (!current) {
       setIncoming([]);
+      setPendingOpen(await fetchPendingMovements("HTG"));
       return;
     }
+    setPendingOpen([]);
     const list = await fetchInternalMovements(current.currencyCode);
     setIncoming(list.filter((m) => m.canAccept && m.destinationTillSessionId === current.id));
   }
@@ -153,6 +163,11 @@ export function TellerPage() {
 
   async function onOpen(event: FormEvent) {
     event.preventDefault();
+    const pending = pendingOpen[0];
+    if (!pending) {
+      setError(t("teller.openNone"));
+      return;
+    }
     const counted = parseMoneyInput(floatAmt);
     if (counted === null) {
       setError(t("teller.openRequired"));
@@ -161,7 +176,8 @@ export function TellerPage() {
     setBusy(true);
     setError(null);
     try {
-      setTill(await openTill(counted));
+      await acceptInternalMovement(pending.id, counted);
+      await refreshTill();
       setFloatAmt("");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("teller.error"));
@@ -433,6 +449,12 @@ export function TellerPage() {
           <form className="stack-form" onSubmit={(e) => void onOpen(e)}>
             <h3>{t("teller.openTitle")}</h3>
             <p className="muted">{t("teller.openCaption")}</p>
+            {pendingOpen.length === 0 ? <p className="muted">{t("teller.openNone")}</p> : null}
+            {pendingOpen.map((m) => (
+              <p key={m.id}>
+                {m.movementNo} · {t("teller.openIssued")}: {money(m.amount, m.currencyCode)}
+              </p>
+            ))}
             <label>
               {t("teller.openFloat")}
               <input
@@ -443,11 +465,15 @@ export function TellerPage() {
                 required
                 value={floatAmt}
                 onChange={(e) => setFloatAmt(e.target.value)}
+                disabled={pendingOpen.length === 0}
               />
             </label>
-            <p className="muted">{t("teller.openHelper")}</p>
-            <button className="btn-primary" type="submit" disabled={busy || parseMoneyInput(floatAmt) === null}>
-              {t("teller.open")}
+            <button
+              className="btn-primary"
+              type="submit"
+              disabled={busy || pendingOpen.length === 0 || parseMoneyInput(floatAmt) === null}
+            >
+              {t("teller.openAccept")}
             </button>
           </form>
         )}
@@ -522,12 +548,29 @@ export function TellerPage() {
                   type="button"
                   className="btn-ghost"
                   onClick={() =>
+                    void printUnprintedLivret(selected.id).catch((err: unknown) =>
+                      setError(
+                        err instanceof LivretEmptyError
+                          ? t("savings.livretEmpty")
+                          : err instanceof Error
+                            ? err.message
+                            : t("teller.error")
+                      )
+                    )
+                  }
+                >
+                  {t("savings.livret")}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() =>
                     void downloadLivretPdf(selected.id).catch((err: unknown) =>
                       setError(err instanceof Error ? err.message : t("teller.error"))
                     )
                   }
                 >
-                  {t("savings.livret")}
+                  {t("savings.exportPdf")}
                 </button>
               </p>
             ) : (

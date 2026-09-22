@@ -211,7 +211,8 @@ internal sealed class StaffHarness : IDisposable
             new InstitutionPublicService(Db),
             Sessions,
             new MemoryMfaChallengeStore(),
-            new TotpProtector(Microsoft.AspNetCore.DataProtection.DataProtectionProvider.Create("CPCREDO-tests")));
+            new TotpProtector(Microsoft.AspNetCore.DataProtection.DataProtectionProvider.Create("CPCREDO-tests")),
+            jwt);
     }
 
     public void Dispose() => Db.Dispose();

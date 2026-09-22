@@ -74,4 +74,22 @@ public sealed class SessionTests
         Assert.True(changed.IsSuccess, changed.ErrorMessage);
         Assert.False(harness.Sessions.TryValidate(jti, created.Value.Id, harness.Clock.UtcNow, TimeSpan.FromMinutes(12), out _));
     }
+
+    [Fact]
+    public async Task Second_login_same_user_is_conflict()
+    {
+        using var harness = new StaffHarness();
+        var created = await harness.Staff.CreateAsync(new CreateStaffRequest(
+            "cashier4",
+            "Cashier Four",
+            "cashier4@cpcredo.ht",
+            "Password!123",
+            RoleNames.Caissier));
+        Assert.True(created.IsSuccess, created.ErrorMessage);
+        var first = await harness.Auth.LoginAsync(new LoginRequest("cashier4", "Password!123"), "127.0.0.1");
+        Assert.True(first.IsSuccess, first.ErrorMessage);
+        var second = await harness.Auth.LoginAsync(new LoginRequest("cashier4", "Password!123"), "10.0.0.2");
+        Assert.False(second.IsSuccess);
+        Assert.Equal("SESSION_ALREADY_ACTIVE", second.ErrorCode);
+    }
 }

@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
+import { fetchStaff, type StaffSummary } from "../api/members";
 import {
   acceptInternalMovement,
   createInternalMovement,
@@ -36,6 +37,7 @@ export function InternalMovementPage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [staff, setStaff] = useState<StaffSummary[]>([]);
 
   async function refresh() {
     const [current, open, list] = await Promise.all([
@@ -46,6 +48,8 @@ export function InternalMovementPage() {
     setTill(current);
     setPeers(open);
     setItems(list);
+    const directory = await fetchStaff().catch(() => [] as StaffSummary[]);
+    setStaff(directory);
     if (direction === "TillToVault" || direction === "TillToTill") {
       setSourceId(current?.id ?? "");
     } else {
@@ -81,12 +85,15 @@ export function InternalMovementPage() {
     setBusy(true);
     setError(null);
     try {
+      const destIsOpenTill = peers.some((p) => p.id === destId);
       await createInternalMovement({
         direction,
         amount: parsed,
         currencyCode: currency,
+        reason: direction === "VaultToTill" && !destIsOpenTill ? "OpeningFloat" : undefined,
         sourceTillSessionId: sourceId && sourceId !== "vault" ? sourceId : undefined,
-        destinationTillSessionId: destId || undefined,
+        destinationTillSessionId: destIsOpenTill ? destId : undefined,
+        destinationTellerUserId: direction === "VaultToTill" && !destIsOpenTill ? destId : undefined,
         note: note.trim() || undefined
       });
       setAmount("");
@@ -178,11 +185,26 @@ export function InternalMovementPage() {
               {t("internal.destination")}
               <select value={destId} onChange={(e) => setDestId(e.target.value)} required>
                 <option value="">{t("internal.chooseTill")}</option>
-                {(direction === "TillToTill" ? others : peers).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.cashierName} ({formatMoney(p.expectedCash, p.currencyCode)})
-                  </option>
-                ))}
+                {direction === "TillToTill"
+                  ? others.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.cashierName} ({formatMoney(p.expectedCash, p.currencyCode)})
+                      </option>
+                    ))
+                  : (
+                      <>
+                        {staff.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.fullName}
+                          </option>
+                        ))}
+                        {peers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.cashierName} ({formatMoney(p.expectedCash, p.currencyCode)})
+                          </option>
+                        ))}
+                      </>
+                    )}
               </select>
             </label>
           ) : (

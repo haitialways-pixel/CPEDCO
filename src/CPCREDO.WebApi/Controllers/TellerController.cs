@@ -121,7 +121,77 @@ public sealed class TellerController : ControllerBase
         CancellationToken cancellationToken)
     {
         var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
-        var result = await _teller.AcceptInternalMovementAsync(id, key, cancellationToken);
+        var accept = new AcceptMovementRequest();
+        try
+        {
+            if (Request.ContentLength > 0)
+            {
+                Request.EnableBuffering();
+                accept = await Request.ReadFromJsonAsync<AcceptMovementRequest>(cancellationToken) ?? accept;
+            }
+        }
+        catch
+        {
+            accept = new AcceptMovementRequest();
+        }
+        var result = await _teller.AcceptInternalMovementAsync(id, key, cancellationToken, accept);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("internal-movements/{id:guid}/reject")]
+    [Authorize(Policy = "CanTill")]
+    public async Task<ActionResult<InternalCashMovementDto>> RejectInternal(
+        Guid id,
+        [FromBody] RejectMovementRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _teller.RejectInternalMovementAsync(id, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("pending-movements")]
+    [Authorize(Policy = "CanTill")]
+    public async Task<ActionResult<IReadOnlyList<InternalCashMovementDto>>> PendingMovements(
+        [FromQuery] string? currency,
+        CancellationToken cancellationToken)
+    {
+        var result = await _teller.ListPendingForTellerAsync(currency, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("cash-sources")]
+    [Authorize(Policy = "CanTill")]
+    public async Task<ActionResult<IReadOnlyList<CashSourceDto>>> CashSources(
+        [FromQuery] string? currency,
+        CancellationToken cancellationToken)
+    {
+        var result = await _teller.ListCashSourcesAsync(currency, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("fund-drawer")]
+    [Authorize(Policy = "CanTill")]
+    [RequiresIdempotencyKey]
+    public async Task<ActionResult<InternalCashMovementDto>> FundDrawer(
+        [FromBody] FundDrawerRequest request,
+        CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var result = await _teller.FundDrawerAsync(request, key, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("{tillId:guid}/accept-movement")]
+    [Authorize(Policy = "CanTill")]
+    [RequiresIdempotencyKey]
+    public async Task<ActionResult<InternalCashMovementDto>> AcceptMovement(
+        Guid tillId,
+        [FromBody] AcceptMovementRequest request,
+        CancellationToken cancellationToken)
+    {
+        var key = Request.Headers["Idempotency-Key"].FirstOrDefault();
+        var movementId = request.MovementId ?? tillId;
+        var result = await _teller.AcceptInternalMovementAsync(movementId, key, cancellationToken, request);
         return ToActionResult(result);
     }
 
@@ -134,11 +204,12 @@ public sealed class TellerController : ControllerBase
         return result.ErrorCode switch
         {
             "auth.unauthorized" => Unauthorized(body),
-            "auth.forbidden" => StatusCode(StatusCodes.Status403Forbidden, body),
+            "auth.forbidden" or "internal.self_accept" => StatusCode(StatusCodes.Status403Forbidden, body),
             "till.not_found" or "savings.account.not_found" or "internal.not_found" => NotFound(body),
             "till.not_open" or "teller.insufficient" or "till.already_open" or "till.already_closed" or "savings.blocked"
                 or "internal.already_accepted" or "internal.same_till" or "internal.insufficient"
-                or "internal.insufficient_vault" or "till.pending_internal" => Conflict(body),
+                or "internal.insufficient_vault" or "till.pending_internal" or "till.movement_required"
+                or "SESSION_ALREADY_ACTIVE" => Conflict(body),
             _ => BadRequest(body)
         };
     }

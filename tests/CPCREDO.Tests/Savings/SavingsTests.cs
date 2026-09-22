@@ -195,7 +195,7 @@ public sealed class SavingsTests
     }
 
     [Fact]
-    public async Task Livret_pdf_uses_letterhead_and_stamps_last_print()
+    public async Task Livret_pdf_is_amounts_only_and_does_not_stamp()
     {
         using var harness = new SavingsHarness();
         var member = await harness.CreateMemberAsync("Claire", "Moreau", "CIN-S-LIV");
@@ -209,12 +209,59 @@ public sealed class SavingsTests
         var pdf = await harness.Savings.PrintLivretPdfAsync(opened.Value.Id, null, null);
         Assert.True(pdf.IsSuccess, pdf.ErrorMessage);
         var text = Encoding.UTF8.GetString(pdf.Value!.Content);
-        Assert.Contains("CPCREDO", text);
-        Assert.True(pdf.Value.Content.Length > 800);
+        Assert.DoesNotContain("CPCREDO", text);
+        Assert.DoesNotContain(member.MemberNo, text);
+        Assert.DoesNotContain(opened.Value.AccountNo, text);
+        Assert.True(pdf.Value.Content.Length > 200);
 
-        var stamped = await harness.Savings.GetAccountAsync(opened.Value.Id);
-        Assert.NotNull(stamped.Value!.LastPassbookPrintAtUtc);
+        var unstamped = await harness.Savings.GetAccountAsync(opened.Value.Id);
+        Assert.Null(unstamped.Value!.LastPassbookPrintAtUtc);
+        Assert.All(
+            harness.Db.SavingsLedgerEntries.Where(e => e.SavingsAccountId == opened.Value.Id),
+            e => Assert.Null(e.PrintedOnLivretAtUtc));
         Assert.StartsWith("livret-", pdf.Value.FileName);
+    }
+
+    [Fact]
+    public async Task Livret_prints_only_unprinted_lines_and_confirm_prevents_reprint()
+    {
+        using var harness = new SavingsHarness();
+        var member = await harness.CreateMemberAsync("Claire", "Moreau", "CIN-S-LIV2");
+        var product = (await harness.Savings.ListProductsAsync()).Value!.First();
+        var opened = await harness.Savings.OpenAccountAsync(member.Id, product.Id);
+        harness.Db.SavingsLedgerEntries.AddRange(
+            Entry(opened.Value!.Id, new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), "Credit", 5000m, "Dépôt"),
+            Entry(opened.Value.Id, new DateTime(2026, 9, 2, 0, 0, 0, DateTimeKind.Utc), "Debit", 200m, "Retrait"));
+        await harness.Db.SaveChangesAsync();
+
+        var preview = await harness.Savings.GetUnprintedLivretAsync(opened.Value.Id);
+        Assert.True(preview.IsSuccess, preview.ErrorMessage);
+        Assert.Equal(2, preview.Value!.Lines.Count);
+        Assert.Equal(0m, preview.Value.Lines[0].Debit);
+        Assert.Equal(5000m, preview.Value.Lines[0].Credit);
+        Assert.Equal(5000m, preview.Value.Lines[0].RunningBalance);
+        Assert.Equal(200m, preview.Value.Lines[1].Debit);
+        Assert.Equal(0m, preview.Value.Lines[1].Credit);
+        Assert.Equal(4800m, preview.Value.Lines[1].RunningBalance);
+
+        var ids = preview.Value.Lines.Select(l => l.EntryId!.Value).ToList();
+        var confirmed = await harness.Savings.ConfirmLivretPrintAsync(
+            opened.Value.Id,
+            new ConfirmLivretPrintRequest { EntryIds = ids });
+        Assert.True(confirmed.IsSuccess, confirmed.ErrorMessage);
+        Assert.Empty(confirmed.Value!.Lines);
+
+        var again = await harness.Savings.GetUnprintedLivretAsync(opened.Value.Id);
+        Assert.True(again.IsSuccess, again.ErrorMessage);
+        Assert.Empty(again.Value!.Lines);
+
+        harness.Db.SavingsLedgerEntries.Add(
+            Entry(opened.Value.Id, new DateTime(2026, 9, 3, 0, 0, 0, DateTimeKind.Utc), "Credit", 100m, "Nouveau"));
+        await harness.Db.SaveChangesAsync();
+        var next = await harness.Savings.GetUnprintedLivretAsync(opened.Value.Id);
+        Assert.Single(next.Value!.Lines);
+        Assert.Equal(100m, next.Value.Lines[0].Credit);
+        Assert.Equal(4900m, next.Value.Lines[0].RunningBalance);
     }
 
     [Fact]

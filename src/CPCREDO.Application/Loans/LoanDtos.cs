@@ -98,6 +98,16 @@ public sealed record DisburseLoanRequest
     public Guid? SavingsAccountId { get; set; }
 }
 
+public sealed record TillCashShortfallDto(
+    string Code,
+    string Error,
+    decimal DisbursementAmount,
+    decimal DrawerAvailable,
+    decimal Missing,
+    string CurrencyCode,
+    Guid LoanId,
+    string LoanNo);
+
 public sealed record LoanDto(
     Guid Id,
     string LoanNo,
@@ -121,6 +131,10 @@ public sealed record LoanDto(
     decimal CompulsorySavingsAmount,
     decimal CashDisbursedAmount,
     decimal SavingsDisbursedAmount,
+    decimal RemainingBalanceDue,
+    decimal TotalRepaid,
+    decimal? NextPaymentAmount,
+    DateOnly? NextPaymentDueDate,
     decimal? OfficerMaxApproval,
     bool RequiresSecondApproval,
     Guid? SubmittedByUserId,

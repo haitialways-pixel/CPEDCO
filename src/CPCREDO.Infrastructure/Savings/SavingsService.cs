@@ -404,70 +404,20 @@ public sealed class SavingsService : ISavingsService
         if (!auth.IsSuccess)
             return Result<StatementPdfDto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
 
-        var account = await _db.SavingsAccounts
-            .Include(x => x.Product)
-            .Include(x => x.Member)
-            .FirstOrDefaultAsync(x => x.Id == accountId && x.TenantId == _currentUser.TenantId, cancellationToken);
+        var account = await LoadLivretAccountAsync(accountId, cancellationToken);
         if (account is null)
             return Result<StatementPdfDto>.Fail("savings.account.not_found", "Compte d’épargne introuvable.");
 
+        var lines = await BuildUnprintedLivretLinesAsync(account.Id, cancellationToken);
         var today = _clock.TodayInPortAuPrince();
-        var fromDate = from ?? DateOnly.FromDateTime(
-            (account.LastPassbookPrintAtUtc ?? account.OpenedAtUtc).Kind == DateTimeKind.Utc
-                ? _clock.ToPortAuPrince(account.LastPassbookPrintAtUtc ?? account.OpenedAtUtc)
-                : (account.LastPassbookPrintAtUtc ?? account.OpenedAtUtc));
-        var toDate = to ?? today;
-        if (toDate < fromDate)
-            return Result<StatementPdfDto>.Fail("savings.statement.range", "La date de fin doit être postérieure ou égale à la date de début.");
-
-        var fromUtc = DateTime.SpecifyKind(fromDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-        var toUtc = DateTime.SpecifyKind(toDate.ToDateTime(TimeOnly.MaxValue), DateTimeKind.Utc);
-        var stamp = from is null ? account.LastPassbookPrintAtUtc : null;
-
-        var ledgerEntries = await _db.SavingsLedgerEntries
-            .AsNoTracking()
-            .Where(x => x.SavingsAccountId == accountId)
-            .OrderBy(x => x.ValueDateUtc)
-            .ThenBy(x => x.PostedAtUtc)
-            .ToListAsync(cancellationToken);
-
-        var tillIds = ledgerEntries.Where(x => x.TillSessionId is not null).Select(x => x.TillSessionId!.Value).Distinct().ToList();
-        var cashiers = tillIds.Count == 0
-            ? new Dictionary<Guid, string>()
-            : await (
-                from t in _db.TillSessions.AsNoTracking()
-                join u in _db.Users.AsNoTracking() on t.UserId equals u.Id
-                where tillIds.Contains(t.Id)
-                select new { t.Id, u.FullName }
-            ).ToDictionaryAsync(x => x.Id, x => x.FullName, cancellationToken);
-
-        var openingSource = stamp is { } s
-            ? ledgerEntries.Where(x => x.PostedAtUtc <= s)
-            : ledgerEntries.Where(x => x.ValueDateUtc < fromUtc);
-        var running = MoneyAmount.Normalize(openingSource.Sum(x => x.SignedAmount));
-
-        var printed = stamp is { } printedAfter
-            ? ledgerEntries.Where(x => x.PostedAtUtc > printedAfter && x.PostedAtUtc <= toUtc).ToList()
-            : ledgerEntries.Where(x => x.ValueDateUtc >= fromUtc && x.ValueDateUtc <= toUtc).ToList();
-
-        var lines = new List<LivretLineDto>();
-        foreach (var entry in printed)
-        {
-            running = MoneyAmount.Normalize(running + entry.SignedAmount);
-            var debit = string.Equals(entry.EntryType, "Debit", StringComparison.OrdinalIgnoreCase) ? entry.Amount : 0m;
-            var credit = string.Equals(entry.EntryType, "Credit", StringComparison.OrdinalIgnoreCase) ? entry.Amount : 0m;
-            var cashier = entry.TillSessionId is { } tid && cashiers.TryGetValue(tid, out var name) ? name : "—";
-            lines.Add(new LivretLineDto(
-                entry.ValueDateUtc,
-                entry.Description,
-                MoneyAmount.Normalize(debit),
-                MoneyAmount.Normalize(credit),
-                running,
-                cashier));
-        }
-
+        var fromDate = from ?? (lines.Count == 0
+            ? today
+            : DateOnly.FromDateTime(lines[0].ValueDateUtc));
+        var toDate = to ?? (lines.Count == 0
+            ? today
+            : DateOnly.FromDateTime(lines[^1].ValueDateUtc));
         var (_, available) = await ComputeBalancesAsync(account.Id, cancellationToken);
-        var last = ledgerEntries.LastOrDefault();
+        var last = lines.LastOrDefault();
         var livret = new LivretDto(
             account.Id,
             account.AccountNo,
@@ -479,24 +429,71 @@ public sealed class SavingsService : ISavingsService
             toDate,
             available,
             last?.ValueDateUtc,
-            last is null ? null : MoneyAmount.Normalize(last.Amount),
-            last?.EntryType,
+            last is null ? null : MoneyAmount.Normalize(last.Debit + last.Credit),
+            last is null ? null : last.Debit > 0m ? "Debit" : "Credit",
             lines);
 
         var bytes = LivretPdf.Render(livret);
-        account.LastPassbookPrintAtUtc = _clock.UtcNow;
+        var fileName = $"livret-{account.AccountNo}-{today:yyyyMMdd}.pdf";
+        return Result<StatementPdfDto>.Ok(new StatementPdfDto(bytes, fileName));
+    }
+
+    public async Task<Result<LivretPrintPreviewDto>> GetUnprintedLivretAsync(
+        Guid accountId,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<LivretPrintPreviewDto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+
+        var account = await LoadLivretAccountAsync(accountId, cancellationToken);
+        if (account is null)
+            return Result<LivretPrintPreviewDto>.Fail("savings.account.not_found", "Compte d’épargne introuvable.");
+
+        var lines = await BuildUnprintedLivretLinesAsync(account.Id, cancellationToken);
+        return Result<LivretPrintPreviewDto>.Ok(new LivretPrintPreviewDto(account.Id, account.CurrencyCode, lines));
+    }
+
+    public async Task<Result<LivretPrintPreviewDto>> ConfirmLivretPrintAsync(
+        Guid accountId,
+        ConfirmLivretPrintRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<LivretPrintPreviewDto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+
+        var account = await LoadLivretAccountAsync(accountId, cancellationToken);
+        if (account is null)
+            return Result<LivretPrintPreviewDto>.Fail("savings.account.not_found", "Compte d’épargne introuvable.");
+
+        var ids = (request.EntryIds ?? [])
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0)
+            return Result<LivretPrintPreviewDto>.Fail("savings.livret.empty", "Rien de nouveau à porter sur le livret.");
+
+        var entries = await _db.SavingsLedgerEntries
+            .Where(e => e.SavingsAccountId == account.Id && ids.Contains(e.Id) && e.PrintedOnLivretAtUtc == null)
+            .ToListAsync(cancellationToken);
+        var now = _clock.UtcNow;
+        foreach (var entry in entries)
+            entry.PrintedOnLivretAtUtc = now;
+        if (entries.Count > 0)
+            account.LastPassbookPrintAtUtc = now;
         await _db.SaveChangesAsync(cancellationToken);
         await _audit.LogAsync(
             "Savings.LivretPrinted",
             nameof(SavingsAccount),
             account.Id,
-            new { account.AccountNo, from = fromDate, to = toDate, lines = lines.Count },
+            new { account.AccountNo, stamped = entries.Count },
             account.TenantId,
             _currentUser.UserId,
             cancellationToken: cancellationToken);
 
-        var fileName = $"livret-{account.AccountNo}-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.pdf";
-        return Result<StatementPdfDto>.Ok(new StatementPdfDto(bytes, fileName));
+        var remaining = await BuildUnprintedLivretLinesAsync(account.Id, cancellationToken);
+        return Result<LivretPrintPreviewDto>.Ok(new LivretPrintPreviewDto(account.Id, account.CurrencyCode, remaining));
     }
 
     public async Task<Result<SavingsAccountDto>> PlaceHoldAsync(
@@ -652,6 +649,45 @@ public sealed class SavingsService : ISavingsService
             .Include(x => x.Product)
             .Include(x => x.Liens)
             .FirstOrDefaultAsync(x => x.Id == accountId && x.TenantId == _currentUser.TenantId, cancellationToken);
+
+    private Task<SavingsAccount?> LoadLivretAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
+        _db.SavingsAccounts
+            .Include(x => x.Product)
+            .Include(x => x.Member)
+            .FirstOrDefaultAsync(x => x.Id == accountId && x.TenantId == _currentUser.TenantId, cancellationToken);
+
+    private async Task<IReadOnlyList<LivretLineDto>> BuildUnprintedLivretLinesAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        var entries = await _db.SavingsLedgerEntries.AsNoTracking()
+            .Where(x => x.SavingsAccountId == accountId)
+            .OrderBy(x => x.ValueDateUtc)
+            .ThenBy(x => x.PostedAtUtc)
+            .ThenBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        var running = 0m;
+        var lines = new List<LivretLineDto>();
+        foreach (var entry in entries)
+        {
+            running = MoneyAmount.Normalize(running + entry.SignedAmount);
+            if (entry.PrintedOnLivretAtUtc is not null)
+                continue;
+            var isDebit = string.Equals(entry.EntryType, "Debit", StringComparison.OrdinalIgnoreCase);
+            var amount = MoneyAmount.Normalize(entry.Amount);
+            lines.Add(new LivretLineDto(
+                entry.ValueDateUtc,
+                entry.Description,
+                isDebit ? amount : 0m,
+                isDebit ? 0m : amount,
+                running,
+                string.Empty,
+                entry.Id));
+        }
+
+        return lines;
+    }
 
     private async Task<(decimal Ledger, decimal Available)> ComputeBalancesAsync(
         Guid accountId,

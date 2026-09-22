@@ -10,8 +10,21 @@ public sealed class MemoryStaffSessionStore : IStaffSessionStore
     public Guid Start(Guid userId, DateTime utcNow)
     {
         var id = Guid.NewGuid();
-        _sessions[id] = new Entry(userId, utcNow, false);
+        _sessions[id] = new Entry(userId, utcNow, false, null);
         return id;
+    }
+
+    public bool HasActive(Guid userId, DateTime utcNow, TimeSpan idle)
+    {
+        foreach (var pair in _sessions)
+        {
+            var e = pair.Value;
+            if (e.UserId != userId || e.Revoked)
+                continue;
+            if (utcNow - e.LastActivityUtc <= idle)
+                return true;
+        }
+        return false;
     }
 
     public bool TryValidate(Guid sessionId, Guid userId, DateTime utcNow, TimeSpan idle, out bool idleExpired)
@@ -28,6 +41,20 @@ public sealed class MemoryStaffSessionStore : IStaffSessionStore
         }
 
         return true;
+    }
+
+    public void BindTill(Guid sessionId, Guid tillSessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry) || entry.Revoked)
+            return;
+        _sessions.TryUpdate(sessionId, entry with { TillSessionId = tillSessionId }, entry);
+    }
+
+    public Guid? GetBoundTill(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry) || entry.Revoked)
+            return null;
+        return entry.TillSessionId;
     }
 
     public void Touch(Guid sessionId, DateTime utcNow)
@@ -53,5 +80,5 @@ public sealed class MemoryStaffSessionStore : IStaffSessionStore
         }
     }
 
-    private sealed record Entry(Guid UserId, DateTime LastActivityUtc, bool Revoked);
+    private sealed record Entry(Guid UserId, DateTime LastActivityUtc, bool Revoked, Guid? TillSessionId);
 }

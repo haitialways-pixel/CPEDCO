@@ -79,71 +79,101 @@ export function KycPieces({ memberId, documents, onChanged }: Props) {
   const canManage = roles.some((r) => MANAGE_ROLES.includes(r));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<KycDocumentType | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   return (
-    <section className="card-block kyc-pieces">
-      <h2>{t("kyc.pieces")}</h2>
-      {error ? (
-        <p className="login-form__error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {!canFill ? <p className="muted">{t("kyc.viewOnly")}</p> : null}
-      <div className="kyc-slots">
-        <KycSlotBox
-          slot={PHOTO}
-          memberId={memberId}
-          document={documents.find((d) => d.type === "Photo")}
-          canFill={canFill}
-          canManage={canManage}
-          busy={busy}
-          locale={i18n.language}
-          onBusy={setBusy}
-          onError={setError}
-          onChanged={onChanged}
-        />
-        <div className="kyc-id-group">
-          <h3>{t("kyc.id")}</h3>
-          <div className="kyc-id-row">
-            <KycSlotBox
-              slot={ID_FRONT}
-              memberId={memberId}
-              document={documents.find((d) => d.type === "IdFront")}
-              canFill={canFill}
-              canManage={canManage}
-              busy={busy}
-              locale={i18n.language}
-              onBusy={setBusy}
-              onError={setError}
-              onChanged={onChanged}
-            />
-            <KycSlotBox
-              slot={ID_BACK}
-              memberId={memberId}
-              document={documents.find((d) => d.type === "IdBack")}
-              canFill={canFill}
-              canManage={canManage}
-              busy={busy}
-              locale={i18n.language}
-              onBusy={setBusy}
-              onError={setError}
-              onChanged={onChanged}
-            />
+    <section className="card-block kyc-pieces kyc-pieces--trigger">
+      <button type="button" className="btn-ghost" onClick={() => setOpen(true)}>
+        {t("kyc.identityPieces")}
+      </button>
+      {open ? (
+        <div
+          className="kyc-modal kyc-identity-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="kyc-identity-title"
+          onClick={() => setOpen(false)}
+        >
+          <div className="kyc-modal__card kyc-modal__card--identity" onClick={(e) => e.stopPropagation()}>
+            <div className="kyc-identity-head">
+              <h2 id="kyc-identity-title">{t("kyc.identityPieces")}</h2>
+              <button type="button" className="btn-ghost" onClick={() => setOpen(false)}>
+                {t("kyc.close")}
+              </button>
+            </div>
+            {error ? (
+              <p className="login-form__error" role="alert">
+                {error}
+              </p>
+            ) : null}
+            {!canFill ? <p className="muted">{t("kyc.viewOnly")}</p> : null}
+            <div className="kyc-slots kyc-identity-grid">
+              <KycSlotBox
+                slot={PHOTO}
+                memberId={memberId}
+                document={documents.find((d) => d.type === "Photo")}
+                canFill={canFill}
+                canManage={canManage}
+                busy={busy}
+                locale={i18n.language}
+                onBusy={setBusy}
+                onError={setError}
+                onChanged={onChanged}
+              />
+              <div className="kyc-id-group">
+                <h3>{t("kyc.id")}</h3>
+                <div className="kyc-id-row">
+                  <KycSlotBox
+                    slot={ID_FRONT}
+                    memberId={memberId}
+                    document={documents.find((d) => d.type === "IdFront")}
+                    canFill={canFill}
+                    canManage={canManage}
+                    busy={busy}
+                    locale={i18n.language}
+                    onBusy={setBusy}
+                    onError={setError}
+                    onChanged={onChanged}
+                  />
+                  <KycSlotBox
+                    slot={ID_BACK}
+                    memberId={memberId}
+                    document={documents.find((d) => d.type === "IdBack")}
+                    canFill={canFill}
+                    canManage={canManage}
+                    busy={busy}
+                    locale={i18n.language}
+                    onBusy={setBusy}
+                    onError={setError}
+                    onChanged={onChanged}
+                  />
+                </div>
+              </div>
+              <KycSlotBox
+                slot={SIGNATURE}
+                memberId={memberId}
+                document={documents.find((d) => d.type === "Signature")}
+                canFill={canFill}
+                canManage={canManage}
+                busy={busy}
+                locale={i18n.language}
+                onBusy={setBusy}
+                onError={setError}
+                onChanged={onChanged}
+              />
+            </div>
           </div>
         </div>
-        <KycSlotBox
-          slot={SIGNATURE}
-          memberId={memberId}
-          document={documents.find((d) => d.type === "Signature")}
-          canFill={canFill}
-          canManage={canManage}
-          busy={busy}
-          locale={i18n.language}
-          onBusy={setBusy}
-          onError={setError}
-          onChanged={onChanged}
-        />
-      </div>
+      ) : null}
     </section>
   );
 }
@@ -397,9 +427,9 @@ function KycSlotBox({
         type="button"
         className={`kyc-frame kyc-frame--${slot.frame}${previewUrl && !isPdf ? " kyc-frame--clickable" : ""}`}
         onClick={() => {
-          if (previewUrl && !isPdf) setLightbox(true);
+          /* contained preview only — never full-bleed */
         }}
-        disabled={!previewUrl || isPdf}
+        disabled
         aria-label={t("kyc.preview")}
       >
         {previewUrl && !isPdf ? (

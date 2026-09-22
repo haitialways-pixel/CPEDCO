@@ -1,9 +1,11 @@
+using CPCREDO.Application.Accounting;
 using CPCREDO.Application.Loans;
 using CPCREDO.Application.Teller;
 using CPCREDO.Domain.Accounting;
 using CPCREDO.Domain.Common;
 using CPCREDO.Domain.Loans;
 using CPCREDO.Domain.Members;
+using CPCREDO.Tests.Accounting;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -156,7 +158,7 @@ public sealed class LoanPipelineTests
         using var h = new LoanHarness();
         var loan = await ApproveAsync(h, 10_000m, officerMax: 20_000m);
         h.AsCaissier();
-        var till = await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 50_000m });
+        var till = await h.OpenTillAsync(50_000m);
         Assert.True(till.IsSuccess, till.ErrorMessage);
         var savings = await h.Savings.OpenAccountAsync(h.MemberId, SeedGuids.SavingsProductHtg);
         Assert.True(savings.IsSuccess, savings.ErrorMessage);
@@ -169,6 +171,9 @@ public sealed class LoanPipelineTests
         Assert.Equal(nameof(LoanStatus.Active), disbursed.Value!.Status);
         Assert.Equal(1_000m, disbursed.Value.CompulsorySavingsAmount);
         Assert.Equal(9_000m, disbursed.Value.CashDisbursedAmount);
+        Assert.Equal(12_000m, disbursed.Value.RemainingBalanceDue);
+        Assert.Equal(0m, disbursed.Value.TotalRepaid);
+        Assert.Equal(1_000m, disbursed.Value.NextPaymentAmount);
         Assert.NotNull(disbursed.Value.PostedJournalId);
         Assert.NotNull(disbursed.Value.LienId);
 
@@ -199,6 +204,72 @@ public sealed class LoanPipelineTests
     }
 
     [Fact]
+    public async Task Caissier_cannot_disburse_when_till_cash_is_short_then_fund_allows_payout()
+    {
+        using var h = new LoanHarness();
+        var loan = await ApproveAsync(h, 10_000m, officerMax: 20_000m);
+        h.AsCaissier();
+        var till = await h.OpenTillAsync(100m);
+        Assert.True(till.IsSuccess, till.ErrorMessage);
+        var savings = await h.Savings.OpenAccountAsync(h.MemberId, SeedGuids.SavingsProductHtg);
+        Assert.True(savings.IsSuccess, savings.ErrorMessage);
+
+        var blocked = await h.Loans.DisburseAsync(
+            loan.Id,
+            new DisburseLoanRequest { SavingsAccountId = savings.Value!.Id },
+            "disb-short");
+        Assert.False(blocked.IsSuccess);
+        Assert.Equal("till.insufficient_cash", blocked.ErrorCode);
+        Assert.NotNull(blocked.Details);
+        var shortfall = Assert.IsType<TillCashShortfallDto>(blocked.Details);
+        Assert.Equal(9_000m, shortfall.DisbursementAmount);
+        Assert.Equal(100m, shortfall.DrawerAvailable);
+        Assert.Equal(8_900m, shortfall.Missing);
+        Assert.Equal(0, await h.Db.JournalEntries.CountAsync(j => j.Description.Contains("Décaissement")));
+
+        h.AsAdmin();
+        var vaultTopUp = await h.Journals.PostAsync(
+            new CreateJournalRequest
+            {
+                Description = "Coffre pour décaissement",
+                CurrencyCode = Currencies.Htg,
+                Lines =
+                [
+                    new CreateJournalLineRequest { GlAccountId = SeedGuids.Gl("1030"), Debit = 20_000m, Credit = 0m },
+                    new CreateJournalLineRequest { GlAccountId = SeedGuids.Gl("3010"), Debit = 0m, Credit = 20_000m }
+                ]
+            },
+            "vault-extra-disb");
+        Assert.True(vaultTopUp.IsSuccess, vaultTopUp.ErrorMessage);
+        h.AsCaissier();
+
+        var funded = await h.Teller.FundDrawerAsync(
+            new FundDrawerRequest
+            {
+                SourceKind = "Vault",
+                Amount = 8_900m,
+                CurrencyCode = Currencies.Htg,
+                LoanId = loan.Id,
+                Note = $"Alimentation tiroir pour décaissement prêt #{loan.LoanNo}"
+            },
+            "fund-disb");
+        Assert.True(funded.IsSuccess, funded.ErrorMessage);
+
+        var tillAfterFund = await h.Db.TillSessions.SingleAsync(t => t.Id == till.Value!.Id);
+        Assert.Equal(9_000m, tillAfterFund.ExpectedCash);
+
+        var disbursed = await h.Loans.DisburseAsync(
+            loan.Id,
+            new DisburseLoanRequest { SavingsAccountId = savings.Value.Id },
+            "disb-after-fund");
+        Assert.True(disbursed.IsSuccess, disbursed.ErrorMessage);
+        Assert.Equal(nameof(LoanStatus.Active), disbursed.Value!.Status);
+        Assert.Equal(9_000m, disbursed.Value.CashDisbursedAmount);
+        var tillAfter = await h.Db.TillSessions.SingleAsync(t => t.Id == till.Value!.Id);
+        Assert.Equal(0m, tillAfter.ExpectedCash);
+    }
+
+    [Fact]
     public async Task Officer_cannot_disburse()
     {
         using var h = new LoanHarness();
@@ -216,7 +287,7 @@ public sealed class LoanPipelineTests
         var product = await h.SeedProductAsync();
         var draft = await h.Loans.CreateDraftAsync(Request(h, product.Id));
         h.AsCaissier();
-        await h.Teller.OpenAsync(new OpenTillRequest { CurrencyCode = Currencies.Htg, OpeningFloat = 10_000m });
+        await h.OpenTillAsync(10_000m);
         var failed = await h.Loans.DisburseAsync(draft.Value!.Id, new DisburseLoanRequest(), "disb-draft");
         Assert.Equal("loan.not_approved", failed.ErrorCode);
     }
