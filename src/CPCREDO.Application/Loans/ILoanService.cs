@@ -9,7 +9,14 @@ public interface ILoanService
 
     Task<Result<PayoffQuoteDto>> PreviewPayoffAsync(PreviewLoanRequest request, int daysElapsed, CancellationToken cancellationToken = default);
 
-    Task<Result<IReadOnlyList<LoanDto>>> ListAsync(string? status = null, Guid? memberId = null, CancellationToken cancellationToken = default);
+    Task<Result<IReadOnlyList<LoanDto>>> ListAsync(
+        string? status = null,
+        Guid? memberId = null,
+        Guid? productId = null,
+        Guid? officerId = null,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        CancellationToken cancellationToken = default);
 
     Task<Result<LoanDto>> GetAsync(Guid id, CancellationToken cancellationToken = default);
 

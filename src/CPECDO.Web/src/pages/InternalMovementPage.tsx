@@ -14,6 +14,7 @@ import {
   type TillSession
 } from "../api/teller";
 import { formatMoney } from "../money";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 
 function parseAmount(raw: string): number | null {
   const trimmed = raw.trim();
@@ -38,6 +39,7 @@ export function InternalMovementPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [staff, setStaff] = useState<StaffSummary[]>([]);
+  const ids = useIdOpen();
 
   async function refresh() {
     const [current, open, list] = await Promise.all([
@@ -224,7 +226,14 @@ export function InternalMovementPage() {
       </section>
 
       <section className="card-block">
-        <h2>{t("internal.today")}</h2>
+        <h2>
+          {t("internal.today")}
+          <IdTrigger
+            open={ids.open}
+            onToggle={ids.toggle}
+            lines={items.map((item) => ({ value: item.movementNo }))}
+          />
+        </h2>
         {items.length === 0 ? (
           <p className="muted">{t("internal.empty")}</p>
         ) : (
@@ -232,7 +241,7 @@ export function InternalMovementPage() {
             <table className="data-table data-table--static">
               <thead>
                 <tr>
-                  <th>{t("internal.no")}</th>
+                  {ids.open ? <th>{t("internal.no")}</th> : null}
                   <th>{t("internal.direction")}</th>
                   <th>{t("internal.amount")}</th>
                   <th>{t("reports.status")}</th>
@@ -242,7 +251,7 @@ export function InternalMovementPage() {
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td>{item.movementNo}</td>
+                    {ids.open ? <td>{item.movementNo}</td> : null}
                     <td>{t(`internal.direction.${item.direction}`)}</td>
                     <td>{formatMoney(item.amount, item.currencyCode)}</td>
                     <td>{item.status}</td>

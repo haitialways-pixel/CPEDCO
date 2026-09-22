@@ -340,6 +340,10 @@ public sealed class TellerService : ITellerService
             return Result<InternalCashMovementDto>.Fail("internal.amount", "Le montant est obligatoire.");
         var amount = MoneyAmount.Normalize(request.Amount.Value);
         var reason = ParseReason(request.Reason, direction, request.DestinationTillSessionId, request.DestinationTellerUserId);
+        if (reason is CashMovementReason.CreditPoolFunding)
+            return Result<InternalCashMovementDto>.Fail(
+                "internal.pool",
+                "Le fonds de crédit n’est pas une caisse et ne peut pas ouvrir un tiroir. Utilisez Crédit → Fonds de crédit.");
         if (reason is CashMovementReason.OpeningFloat)
         {
             if (amount < 0m)

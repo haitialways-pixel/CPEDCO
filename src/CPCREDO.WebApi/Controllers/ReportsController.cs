@@ -81,6 +81,21 @@ public sealed class ReportsController : ControllerBase
             () => _reports.GetRenewalRegisterAsync(from, to, cancellationToken),
             () => _reports.ExportRenewalRegisterAsync(from, to, format!, cancellationToken));
 
+    [HttpGet("credit")]
+    [Authorize(Policy = "CanCreditReport")]
+    public async Task<IActionResult> Credit(
+        [FromQuery] DateOnly? from,
+        [FromQuery] DateOnly? to,
+        [FromQuery] Guid? productId,
+        [FromQuery] Guid? officerId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _reports.GetCreditReportAsync(from, to, productId, officerId, cancellationToken);
+        if (!result.IsSuccess)
+            return Fail(result.ErrorCode!, result.ErrorMessage!);
+        return Ok(result.Value);
+    }
+
     [HttpGet("liquidity")]
     public Task<IActionResult> Liquidity(
         [FromQuery] DateOnly? asOf,

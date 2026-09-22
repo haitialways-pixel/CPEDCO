@@ -90,6 +90,11 @@ public static class RoleNames
         Admin, Gerant
     ];
 
+    public static readonly IReadOnlyList<string> CreditReportRoles =
+    [
+        Admin, Gerant, OfficierCredit, Commissaire
+    ];
+
     public static readonly IReadOnlyList<string> TreasuryDraftRoles =
     [
         Admin, Gerant, Caissier

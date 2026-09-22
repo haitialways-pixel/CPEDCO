@@ -250,6 +250,7 @@ internal sealed class LoanHarness : IDisposable
         Db.GlAccounts.AddRange(
             Gl("1010", GlAccountType.Asset, NormalBalance.Debit),
             Gl("1030", GlAccountType.Asset, NormalBalance.Debit),
+            Gl("1040", GlAccountType.Asset, NormalBalance.Debit),
             Gl("1210", GlAccountType.Asset, NormalBalance.Debit),
             Gl("3010", GlAccountType.Equity, NormalBalance.Credit),
             Gl("2010", GlAccountType.Liability, NormalBalance.Credit),
@@ -276,11 +277,14 @@ internal sealed class LoanHarness : IDisposable
         var audit = new AuditLogger(Db, clock, User);
         var journals = new JournalService(Db, User, clock, audit);
         Products = new LoanProductService(Db, User, clock, audit);
-        Loans = new LoanService(Db, User, clock, audit, journals);
         Savings = new SavingsService(Db, User, clock, audit);
         Teller = new TellerService(Db, User, clock, journals, audit);
         Journals = journals;
+        Pool = new CreditPoolService(Db, User, clock, journals, audit);
+        Loans = new LoanService(Db, User, clock, audit, journals, Pool);
     }
+
+    public CreditPoolService Pool { get; }
 
     public SavingsService Savings { get; }
     public TellerService Teller { get; }

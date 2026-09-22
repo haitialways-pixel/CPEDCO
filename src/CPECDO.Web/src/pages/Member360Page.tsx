@@ -28,6 +28,7 @@ import {
 } from "../api/savings";
 
 import { formatMoney } from "../money";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 
 function money(value: number, currency: string) {
   return formatMoney(value, currency);
@@ -41,6 +42,9 @@ export function Member360Page() {
   const canWrite = session?.roles.some((r) => !r.isReadOnly) ?? false;
   const canServiceClient =
     session?.roles.some((r) => ["Admin", "Gerant", "ServiceClient"].includes(r.name)) ?? false;
+  const accountIds = useIdOpen();
+  const txIds = useIdOpen();
+  const loanIds = useIdOpen();
   const [member, setMember] = useState<Member360 | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -155,8 +159,10 @@ export function Member360Page() {
       </p>
       <div className="page__head">
         <div>
-          <p className="eyebrow">{member.memberNo}</p>
-          <h1>{member.fullName}</h1>
+          <h1>
+            {member.fullName}
+            <IdTrigger lines={[{ value: member.memberNo }]} />
+          </h1>
         </div>
         {canWrite && !editing ? (
           <button type="button" className="btn-ghost" onClick={() => setEditing(true)}>
@@ -402,14 +408,21 @@ export function Member360Page() {
             ) : null}
           </section>
           <section className="card-block">
-            <h2>{t("savings.title")}</h2>
+            <h2>
+              {t("savings.title")}
+              <IdTrigger
+                open={accountIds.open}
+                onToggle={accountIds.toggle}
+                lines={accounts.map((account) => ({ value: account.accountNo }))}
+              />
+            </h2>
             {accounts.length === 0 ? <p className="muted">{t("savings.empty")}</p> : null}
             {accounts.length > 0 ? (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>{t("savings.accountNo")}</th>
+                      {accountIds.open ? <th>{t("savings.accountNo")}</th> : null}
                       <th>{t("savings.product")}</th>
                       <th>{t("savings.ledger")}</th>
                       <th>{t("savings.available")}</th>
@@ -419,7 +432,7 @@ export function Member360Page() {
                   <tbody>
                     {accounts.map((account) => (
                       <tr key={account.id} onClick={() => navigate(`/savings-accounts/${account.id}`)}>
-                        <td>{account.accountNo}</td>
+                        {accountIds.open ? <td>{account.accountNo}</td> : null}
                         <td>{account.productName}</td>
                         <td>{money(account.ledgerBalance, account.currencyCode)}</td>
                         <td>{money(account.availableBalance, account.currencyCode)}</td>
@@ -468,7 +481,14 @@ export function Member360Page() {
           </section>
 
           <section className="card-block">
-            <h2>{t("service.transactions")}</h2>
+            <h2>
+              {t("service.transactions")}
+              <IdTrigger
+                open={txIds.open}
+                onToggle={txIds.toggle}
+                lines={(member.recentTransactions ?? []).map((tx) => ({ value: tx.accountNo }))}
+              />
+            </h2>
             {(member.recentTransactions ?? []).length === 0 ? (
               <p className="muted">{t("service.noTransactions")}</p>
             ) : (
@@ -477,7 +497,7 @@ export function Member360Page() {
                   <thead>
                     <tr>
                       <th>{t("savings.date")}</th>
-                      <th>{t("savings.accountNo")}</th>
+                      {txIds.open ? <th>{t("savings.accountNo")}</th> : null}
                       <th>{t("savings.description")}</th>
                       <th>{t("savings.type")}</th>
                       <th>{t("savings.amount")}</th>
@@ -487,7 +507,7 @@ export function Member360Page() {
                     {member.recentTransactions.map((tx) => (
                       <tr key={`${tx.savingsAccountId}-${tx.postedAtUtc}-${tx.description}`}>
                         <td>{tx.valueDateUtc.slice(0, 10)}</td>
-                        <td>{tx.accountNo}</td>
+                        {txIds.open ? <td>{tx.accountNo}</td> : null}
                         <td>{tx.description}</td>
                         <td>{tx.entryType}</td>
                         <td>{money(tx.amount, tx.currencyCode)}</td>
@@ -500,7 +520,14 @@ export function Member360Page() {
           </section>
 
           <section className="card-block">
-            <h2>{t("service.loans")}</h2>
+            <h2>
+              {t("service.loans")}
+              <IdTrigger
+                open={loanIds.open}
+                onToggle={loanIds.toggle}
+                lines={(member.loans ?? []).map((loan) => ({ value: loan.loanNo }))}
+              />
+            </h2>
             {!member.loans || member.loans.length === 0 ? (
               <p className="muted">{member.loansPlaceholder ?? t("service.loansNone")}</p>
             ) : (
@@ -508,7 +535,7 @@ export function Member360Page() {
                 <table className="data-table data-table--static">
                   <thead>
                     <tr>
-                      <th>{t("loans.loanNo")}</th>
+                      {loanIds.open ? <th>{t("loans.loanNo")}</th> : null}
                       <th>{t("loans.status")}</th>
                       <th>{t("loans.cycle")}</th>
                       <th>{t("loans.remainingRenewals")}</th>
@@ -519,10 +546,16 @@ export function Member360Page() {
                   <tbody>
                     {member.loans.map((loan) => (
                       <tr key={loan.id}>
+                        {loanIds.open ? (
+                          <td>
+                            <Link to={`/credit/prets/${loan.id}`}>{loan.loanNo}</Link>
+                          </td>
+                        ) : null}
                         <td>
-                          <Link to={`/credit/prets/${loan.id}`}>{loan.loanNo}</Link>
+                          <Link to={`/credit/prets/${loan.id}`}>
+                            {t(`loans.status.${loan.status}`, { defaultValue: loan.status })}
+                          </Link>
                         </td>
-                        <td>{t(`loans.status.${loan.status}`, { defaultValue: loan.status })}</td>
                         <td>{loan.cycleNumber}</td>
                         <td>
                           {loan.remainingRenewals == null
@@ -546,7 +579,8 @@ export function Member360Page() {
                 {accounts.map((account) => (
                   <div key={account.id} className="stack-form" style={{ marginBottom: "1rem" }}>
                     <p>
-                      <strong>{account.accountNo}</strong> · {account.productName}
+                      <strong>{account.productName}</strong>
+                      <IdTrigger lines={[{ value: account.accountNo }]} />
                       {account.isBlocked ? ` · ${t("service.blocked")}` : ""}
                     </p>
                     {(account.holds ?? []).length === 0 ? (
@@ -717,7 +751,8 @@ export function Member360Page() {
                     {member.tickets.map((ticket) => (
                       <li key={ticket.id} className="card-block">
                         <strong>
-                          {ticket.ticketNo} · {ticket.subject}
+                          {ticket.subject}
+                          <IdTrigger lines={[{ value: ticket.ticketNo }]} />
                         </strong>
                         <p className="muted">
                           {t(`service.ticketStatus.${ticket.status}`)} · {ticket.createdByName}

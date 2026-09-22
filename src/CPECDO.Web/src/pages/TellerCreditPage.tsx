@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { fetchMember360, searchMembers, type KycDocument, type MemberSummary } from "../api/members";
 import { KycPieces } from "../components/KycPieces";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 import { fetchMemberSavings, type SavingsAccount } from "../api/savings";
 import { fetchCurrentTill, type TillSession } from "../api/teller";
 import {
@@ -97,6 +98,7 @@ export function TellerCreditPage() {
   const [kycDocuments, setKycDocuments] = useState<KycDocument[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loanId, setLoanId] = useState("");
+  const ids = useIdOpen();
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [savingsAccountId, setSavingsAccountId] = useState("");
   const [amount, setAmount] = useState("");
@@ -263,7 +265,12 @@ export function TellerCreditPage() {
       {member ? (
         <>
           <p>
-            <strong>{member.fullName}</strong> ({member.memberNo})
+            <strong>{member.fullName}</strong>
+            <IdTrigger
+              open={ids.open}
+              onToggle={ids.toggle}
+              lines={[{ value: member.memberNo }, { value: selected?.loanNo }]}
+            />
           </p>
           <KycPieces
             memberId={member.id}
@@ -289,7 +296,8 @@ export function TellerCreditPage() {
                 >
                   {actionable.map((loan) => (
                     <option key={loan.id} value={loan.id}>
-                      {loan.loanNo} — {loan.productDisplayName} ({t(`loans.status.${loan.status}`)})
+                      {ids.open ? `${loan.loanNo} — ` : ""}
+                      {loan.productDisplayName} ({t(`loans.status.${loan.status}`)})
                     </option>
                   ))}
                 </select>
@@ -362,7 +370,8 @@ export function TellerCreditPage() {
                         <option value="">{t("loans.selectSavings")}</option>
                         {accounts.map((account) => (
                           <option key={account.id} value={account.id}>
-                            {account.accountNo} — {account.productName}
+                            {ids.open ? `${account.accountNo} — ` : ""}
+                            {account.productName}
                           </option>
                         ))}
                       </select>

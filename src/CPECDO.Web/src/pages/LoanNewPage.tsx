@@ -13,6 +13,7 @@ import {
   type PayoffQuote
 } from "../api/loans";
 import { formatMoney } from "../money";
+import { IdTrigger } from "../components/IdTrigger";
 
 export function LoanNewPage() {
   const { t } = useTranslation();
@@ -163,7 +164,8 @@ export function LoanNewPage() {
       ) : null}
       {member ? (
         <p>
-          <strong>{member.fullName}</strong> ({member.memberNo})
+          <strong>{member.fullName}</strong>
+          <IdTrigger lines={[{ value: member.memberNo }]} />
         </p>
       ) : (
         <p className="muted">{t("loans.memberSearch")}</p>

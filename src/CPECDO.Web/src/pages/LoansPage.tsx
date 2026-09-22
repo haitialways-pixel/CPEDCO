@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { fetchLoans, type Loan } from "../api/loans";
 import { formatMoney } from "../money";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 
 const PIPELINE = ["Draft", "PendingApproval", "Approved", "Active"] as const;
 
@@ -11,6 +12,11 @@ export function LoansPage() {
   const { t } = useTranslation();
   const [params] = useSearchParams();
   const vue = params.get("vue");
+  const statusFilter = params.get("status");
+  const productFilter = params.get("productId");
+  const officerFilter = params.get("officerId");
+  const fromFilter = params.get("from");
+  const toFilter = params.get("to");
   const { session } = useAuth();
   const roles = session?.roles.map((r) => r.name) ?? [];
   const canWrite = roles.some((r) => ["Admin", "Gerant", "OfficierCredit"].includes(r));
@@ -25,12 +31,22 @@ export function LoansPage() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [tab, setTab] = useState<string>(defaultTab);
   const [error, setError] = useState<string | null>(null);
+  const ids = useIdOpen();
 
   useEffect(() => {
-    void fetchLoans()
+    if (statusFilter) setTab(statusFilter);
+  }, [statusFilter]);
+
+  useEffect(() => {
+    void fetchLoans(undefined, undefined, {
+      productId: productFilter || undefined,
+      officerId: officerFilter || undefined,
+      from: fromFilter || undefined,
+      to: toFilter || undefined
+    })
       .then(setLoans)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : t("loans.error")));
-  }, [t]);
+  }, [t, productFilter, officerFilter, fromFilter, toFilter]);
 
   const visible = useMemo(
     () => (tab ? loans.filter((l) => l.status === tab) : loans),
@@ -45,6 +61,11 @@ export function LoansPage() {
     <main className="page">
       <h1>
         {vue === "fiche" ? t("nav.loanFiche") : vue === "renouvellement" ? t("nav.loanRenew") : t("loans.pipeline")}
+        <IdTrigger
+          open={ids.open}
+          onToggle={ids.toggle}
+          lines={visible.flatMap((loan) => [{ value: loan.loanNo }, { value: loan.memberNo }])}
+        />
       </h1>
       <p className="row-actions">
         {canWrite ? (
@@ -85,7 +106,7 @@ export function LoansPage() {
         <table className="data-table data-table--static">
           <thead>
             <tr>
-              <th>{t("loans.loanNo")}</th>
+              {ids.open ? <th>{t("loans.loanNo")}</th> : null}
               <th>{t("loans.member")}</th>
               <th>{t("loans.product")}</th>
               <th>{t("loans.principal")}</th>
@@ -96,18 +117,23 @@ export function LoansPage() {
           <tbody>
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={6}>{t("loans.empty")}</td>
+                <td colSpan={ids.open ? 6 : 5}>{t("loans.empty")}</td>
               </tr>
             ) : (
               visible.map((loan) => (
                 <tr key={loan.id}>
+                  {ids.open ? (
+                    <td>
+                      <Link to={vue === "renouvellement" ? `/credit/prets/${loan.id}?vue=renouvellement` : `/credit/prets/${loan.id}`}>
+                        {loan.loanNo}
+                      </Link>
+                    </td>
+                  ) : null}
                   <td>
                     <Link to={vue === "renouvellement" ? `/credit/prets/${loan.id}?vue=renouvellement` : `/credit/prets/${loan.id}`}>
-                      {loan.loanNo}
+                      {ids.open ? `${loan.memberNo} — ` : ""}
+                      {loan.memberName}
                     </Link>
-                  </td>
-                  <td>
-                    {loan.memberNo} — {loan.memberName}
                   </td>
                   <td>{loan.productDisplayName}</td>
                   <td>{formatMoney(loan.principal, loan.currencyCode)}</td>

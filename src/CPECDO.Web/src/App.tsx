@@ -22,6 +22,8 @@ import { LoanProductsPage } from "./pages/LoanProductsPage";
 import { LoansPage } from "./pages/LoansPage";
 import { LoanNewPage } from "./pages/LoanNewPage";
 import { LoanDetailPage } from "./pages/LoanDetailPage";
+import { CreditReportPage } from "./pages/CreditReportPage";
+import { CreditPoolPage } from "./pages/CreditPoolPage";
 import { CollectionSheetPage } from "./pages/CollectionSheetPage";
 import { TellerCreditPage } from "./pages/TellerCreditPage";
 import { InternalMovementPage } from "./pages/InternalMovementPage";
@@ -274,6 +276,22 @@ export function App() {
         element={
           <Protected>
             <LoansPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/credit/rapports"
+        element={
+          <Protected>
+            <CreditReportPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/credit/fonds"
+        element={
+          <Protected>
+            <CreditPoolPage />
           </Protected>
         }
       />

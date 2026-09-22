@@ -9,6 +9,7 @@ if ([string]::IsNullOrWhiteSpace($UsbRoot)) { $UsbRoot = $PSScriptRoot }
 
 $script:LogPath = $null
 $script:StartedPid = $null
+$script:InstallOk = $false
 $script:Dest = "C:\CPCREDO"
 $script:IsUpdate = $false
 $script:PgPort = 5432
@@ -298,13 +299,54 @@ function Invoke-Psql {
 
 function Get-LanIPv4 {
     try {
-        $addrs = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-            Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
+        $addrs = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*"
+            } |
             Select-Object -ExpandProperty IPAddress)
-        return @(As-Array $addrs)
+        $list = @(As-Array $addrs)
+        if ($list -contains "192.168.10.108") {
+            return @("192.168.10.108") + @($list | Where-Object { $_ -ne "192.168.10.108" })
+        }
+        return $list
     }
     catch { }
     return @()
+}
+
+function Write-InstallSummary {
+    $ok = [bool]$script:InstallOk
+    $status = if ($ok) { "OK" } else { "ECHEC" }
+    $ips = @(Get-LanIPv4)
+    $ip = if ((As-Array $ips).Count -gt 0) { $ips[0] } else { $null }
+    $url = if ($ip) { "https://${ip}:5443" } else { "https://127.0.0.1:5443" }
+    $bound = $false
+    try {
+        $listen = @(Get-NetTCPConnection -LocalPort 5443 -State Listen -ErrorAction SilentlyContinue)
+        $bound = ((As-Array $listen).Count -gt 0)
+    } catch { }
+    $procs = @(Get-Process -Name "CPCREDO.WebApi" -ErrorAction SilentlyContinue)
+    $procState = if ((As-Array $procs).Count -gt 0) { "en cours (pid $($procs[0].Id))" } else { "arrete" }
+    $taskState = "inconnue"
+    try {
+        $tasks = @(Get-ScheduledTask -TaskName "CPCREDO" -ErrorAction SilentlyContinue)
+        if ((As-Array $tasks).Count -gt 0) { $taskState = [string]$tasks[0].State }
+    } catch { }
+    $log = if ($script:LogPath) { $script:LogPath } else { "C:\CPCREDO\logs\install.log" }
+    Write-Host ""
+    Write-Host "----------------------------------------"
+    Write-Host "Installation : $status"
+    Write-Host "Dossier : C:\CPCREDO"
+    if ($ip) { Write-Host "IP reseau : $ip" } else { Write-Host "IP reseau : (aucune IPv4 LAN detectee)" }
+    Write-Host "URL : $url"
+    Write-Host "HTTP local : http://127.0.0.1:5080 (localhost seulement)"
+    Write-Host "Tache CPCREDO : $taskState"
+    Write-Host "Processus CPCREDO.WebApi : $procState"
+    if (-not $bound) {
+        Write-Host "L'API n'ecoute pas le port 5443."
+        Write-Host "Journal : $log"
+    }
+    Write-Host "----------------------------------------"
 }
 
 function Open-CpcredoUrl {
@@ -1160,6 +1202,7 @@ function Complete-FirstRun {
     try { Open-CpcredoUrl $script:PublicUrl } catch { }
     Write-InstallLog "DONE" "OK" $script:PublicUrl
     Save-InstallState @{ resume = $false; step = "done"; needReboot = $false }
+    $script:InstallOk = $true
 }
 
 function Invoke-Page4 {
@@ -1338,4 +1381,14 @@ else {
     Show-Page 1
 }
 
-[void]$script:Form.ShowDialog()
+$script:InstallOk = $false
+try {
+    [void]$script:Form.ShowDialog()
+}
+catch {
+    Write-InstallLog "INSTALL" "FAIL" $_.Exception.Message
+    $script:InstallOk = $false
+}
+finally {
+    Write-InstallSummary
+}

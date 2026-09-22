@@ -8,8 +8,6 @@ if errorlevel 1 (
   exit /b 1
 )
 powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0Setup-Serveur.ps1"
-if errorlevel 1 (
-  echo.
-  echo Installation interrompue. Journal : C:\CPCREDO\logs\install.log
-  pause
-)
+echo.
+echo Journal : C:\CPCREDO\logs\install.log
+pause

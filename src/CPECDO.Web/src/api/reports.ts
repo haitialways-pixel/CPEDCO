@@ -13,6 +13,48 @@ function params(values: Record<string, string | undefined>): string {
   return search.toString();
 }
 
+export type CreditReport = {
+  from: string;
+  to: string;
+  currencyCode: string;
+  received: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  cancelled: number;
+  disbursed: number;
+  requestedAmount: number;
+  approvedAmount: number;
+  disbursedAmount: number;
+  outstandingPrincipal: number;
+  poolOpening: number;
+  poolFunded: number;
+  poolDisbursed: number;
+  poolAvailable: number;
+  interestReceived: number;
+  interestAccrued: number;
+  feesPenaltiesReceived: number;
+  approvalRate: number | null;
+  avgDaysApplyToDecision: number | null;
+  avgDaysDecisionToDisburse: number | null;
+  par30: number;
+  par90: number;
+  rejectReasons: { reason: string; count: number }[];
+  byProduct: { id: string; label: string; count: number; requested: number; disbursed: number; href: string }[];
+  byOfficer: { id: string; label: string; count: number; requested: number; disbursed: number; href: string }[];
+};
+
+export async function fetchCreditReport(query: {
+  from: string;
+  to: string;
+  productId?: string;
+  officerId?: string;
+}): Promise<CreditReport> {
+  const response = await apiFetch(`/api/v1/reports/credit?${params(query)}`, { headers: headers() });
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as CreditReport;
+}
+
 export type ReportKind =
   | "teller-cash-proof"
   | "trial-balance"

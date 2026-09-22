@@ -610,6 +610,155 @@ public sealed class ReportService : IReportService
             .ToList();
     }
 
+    public async Task<Result<CreditReportDto>> GetCreditReportAsync(
+        DateOnly? from,
+        DateOnly? to,
+        Guid? productId,
+        Guid? officerId,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = RequireUser();
+        if (!auth.IsSuccess)
+            return Result<CreditReportDto>.Fail(auth.ErrorCode!, auth.ErrorMessage!);
+        if (!_currentUser.Roles.Any(r =>
+                r is Domain.Identity.RoleNames.Admin
+                    or Domain.Identity.RoleNames.Gerant
+                    or Domain.Identity.RoleNames.OfficierCredit
+                    or Domain.Identity.RoleNames.Commissaire))
+            return Result<CreditReportDto>.Fail("auth.forbidden", "Le caissier n’a pas accès au rapport crédit.");
+
+        var end = to ?? _clock.TodayInPortAuPrince();
+        var start = from ?? end.AddDays(-30);
+        if (end < start)
+            return Result<CreditReportDto>.Fail("report.range", "La date de fin doit être postérieure ou égale à la date de début.");
+        var startUtc = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddHours(-6);
+        var endUtc = DateTime.SpecifyKind(end.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddHours(18);
+        var currency = Currencies.Htg;
+
+        var loans = await _db.Loans.AsNoTracking()
+            .Include(l => l.Product)
+            .Include(l => l.Installments)
+            .Include(l => l.Repayments)
+            .Where(l => l.TenantId == _currentUser.TenantId && l.CurrencyCode == currency)
+            .ToListAsync(cancellationToken);
+        if (productId is { } pid)
+            loans = loans.Where(l => l.ProductId == pid).ToList();
+        if (officerId is { } oid)
+            loans = loans.Where(l => (l.SubmittedByUserId ?? l.CreatedByUserId) == oid).ToList();
+
+        bool InRange(DateTime? utc) => utc is { } d && d >= startUtc && d < endUtc;
+        DateTime EventDate(Loan l) => l.SubmittedAtUtc ?? l.CreatedAtUtc;
+
+        var received = loans.Where(l => InRange(l.CreatedAtUtc)).ToList();
+        var pending = loans.Where(l => l.Status == LoanStatus.PendingApproval && InRange(EventDate(l))).ToList();
+        var approved = loans.Where(l => InRange(l.Approved1AtUtc) && l.Status is LoanStatus.Approved or LoanStatus.Active or LoanStatus.PaidOff or LoanStatus.Renewed).ToList();
+        var rejected = loans.Where(l => InRange(l.RejectedAtUtc)).ToList();
+        var disbursed = loans.Where(l => InRange(l.DisbursedAtUtc)).ToList();
+        var outstanding = loans
+            .Where(l => l.Status == LoanStatus.Active)
+            .Sum(l => l.Installments.Sum(LoanRepaymentAllocator.RemainingPrincipal));
+        outstanding = MoneyAmount.Normalize(outstanding);
+
+        var interestReceived = MoneyAmount.Normalize(
+            loans.SelectMany(l => l.Repayments).Where(r => InRange(r.CreatedAtUtc)).Sum(r => r.InterestAllocated));
+        var fees = MoneyAmount.Normalize(
+            loans.SelectMany(l => l.Repayments).Where(r => InRange(r.CreatedAtUtc)).Sum(r => r.PenaltyAllocated));
+        var interestAccrued = MoneyAmount.Normalize(
+            loans.Where(l => l.Status == LoanStatus.Active).SelectMany(l => l.Installments).Sum(LoanRepaymentAllocator.RemainingInterest));
+
+        var qs = $"from={start:yyyy-MM-dd}&to={end:yyyy-MM-dd}";
+        if (productId is { } pfilter) qs += $"&productId={pfilter}";
+        if (officerId is { } ofilter) qs += $"&officerId={ofilter}";
+
+        var applyDecision = approved
+            .Where(l => l.SubmittedAtUtc is not null && l.Approved1AtUtc is not null)
+            .Select(l => (l.Approved1AtUtc!.Value - l.SubmittedAtUtc!.Value).TotalDays)
+            .ToList();
+        var decisionDisburse = disbursed
+            .Where(l => l.Approved1AtUtc is not null && l.DisbursedAtUtc is not null)
+            .Select(l => (l.DisbursedAtUtc!.Value - l.Approved1AtUtc!.Value).TotalDays)
+            .ToList();
+
+        var active = loans.Where(l => l.Status == LoanStatus.Active).ToList();
+        var parRows = active.Select(l => (
+            Principal: MoneyAmount.Normalize(l.Installments.Sum(LoanRepaymentAllocator.RemainingPrincipal)),
+            Dpd: LoanDelinquency.DaysPastDue(l.Installments, end))).ToList();
+        var par30 = MoneyAmount.Normalize(parRows.Where(x => x.Dpd >= 30).Sum(x => x.Principal));
+        var par90 = MoneyAmount.Normalize(parRows.Where(x => x.Dpd >= 90).Sum(x => x.Principal));
+
+        var rejectReasons = rejected
+            .GroupBy(l => string.IsNullOrWhiteSpace(l.RejectReason) ? "(sans motif)" : l.RejectReason!.Trim())
+            .Select(g => new CreditRejectReasonDto(g.Key, g.Count()))
+            .OrderByDescending(x => x.Count)
+            .ToList();
+
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => u.TenantId == _currentUser.TenantId)
+            .ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
+
+        IReadOnlyList<CreditBreakdownDto> By(Func<Loan, string> id, Func<Loan, string> label, string extra) =>
+            received.GroupBy(id).Select(g =>
+            {
+                var ids = g.Select(x => x.Id).ToHashSet();
+                return new CreditBreakdownDto(
+                    g.Key,
+                    label(g.First()),
+                    g.Count(),
+                    MoneyAmount.Normalize(g.Sum(x => x.Principal)),
+                    MoneyAmount.Normalize(disbursed.Where(x => ids.Contains(x.Id)).Sum(x => x.Principal)),
+                    $"/credit/prets?{qs}&{extra}={g.Key}");
+            }).OrderBy(x => x.Label).ToList();
+
+        var pool = await _db.CreditPools.AsNoTracking()
+            .Include(p => p.Movements)
+            .FirstOrDefaultAsync(p => p.TenantId == _currentUser.TenantId && p.CurrencyCode == currency, cancellationToken);
+        var movements = pool?.Movements.ToList() ?? [];
+        var poolOpening = MoneyAmount.Normalize(
+            movements.Where(m => m.CreatedAtUtc < startUtc).Sum(m => m.Kind == "Funding" ? m.Amount : -m.Amount));
+        var poolFunded = MoneyAmount.Normalize(movements.Where(m => m.Kind == "Funding" && InRange(m.CreatedAtUtc)).Sum(m => m.Amount));
+        var poolDisbursed = MoneyAmount.Normalize(movements.Where(m => m.Kind == "Disbursement" && InRange(m.CreatedAtUtc)).Sum(m => m.Amount));
+        var reserved = MoneyAmount.Normalize(loans.Where(l => l.Status == LoanStatus.Approved).Sum(l => l.Principal));
+        var poolAvailable = MoneyAmount.Normalize((pool?.FundedTotal ?? 0m) - (pool?.DisbursedTotal ?? 0m) - reserved);
+        if (poolAvailable < 0m)
+            poolAvailable = 0m;
+
+        var receivedCount = received.Count;
+        decimal? rate = receivedCount == 0 ? null : MoneyAmount.Normalize((decimal)approved.Count / receivedCount);
+
+        return Result<CreditReportDto>.Ok(new CreditReportDto(
+            start,
+            end,
+            currency,
+            receivedCount,
+            pending.Count,
+            approved.Count,
+            rejected.Count,
+            0,
+            disbursed.Count,
+            MoneyAmount.Normalize(received.Sum(l => l.Principal)),
+            MoneyAmount.Normalize(approved.Sum(l => l.Principal)),
+            MoneyAmount.Normalize(disbursed.Sum(l => l.Principal)),
+            outstanding,
+            poolOpening,
+            poolFunded,
+            poolDisbursed,
+            poolAvailable,
+            interestReceived,
+            interestAccrued,
+            fees,
+            rate,
+            applyDecision.Count == 0 ? null : applyDecision.Average(),
+            decisionDisburse.Count == 0 ? null : decisionDisburse.Average(),
+            par30,
+            par90,
+            rejectReasons,
+            By(l => l.ProductId.ToString(), l => l.Product?.DisplayName ?? l.ProductId.ToString(), "productId"),
+            By(
+                l => (l.SubmittedByUserId ?? l.CreatedByUserId).ToString(),
+                l => users.TryGetValue(l.SubmittedByUserId ?? l.CreatedByUserId, out var n) ? n : "—",
+                "officerId")));
+    }
+
     private Result<bool> RequireUser()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.TenantId is null || _currentUser.UserId is null)

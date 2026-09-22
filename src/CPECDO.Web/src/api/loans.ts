@@ -220,10 +220,18 @@ export async function deactivateLoanProduct(id: string): Promise<LoanProduct> {
   return read(await apiFetch(`/api/v1/loan-products/${id}/deactivate`, { method: "POST", headers: headers() }));
 }
 
-export async function fetchLoans(status?: string, memberId?: string): Promise<Loan[]> {
+export async function fetchLoans(
+  status?: string,
+  memberId?: string,
+  extra?: { productId?: string; officerId?: string; from?: string; to?: string }
+): Promise<Loan[]> {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   if (memberId) params.set("memberId", memberId);
+  if (extra?.productId) params.set("productId", extra.productId);
+  if (extra?.officerId) params.set("officerId", extra.officerId);
+  if (extra?.from) params.set("from", extra.from);
+  if (extra?.to) params.set("to", extra.to);
   const qs = params.toString();
   return read(await apiFetch(`/api/v1/loans${qs ? `?${qs}` : ""}`, { headers: headers() }));
 }

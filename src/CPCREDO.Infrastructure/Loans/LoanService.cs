@@ -21,19 +21,22 @@ public sealed class LoanService : ILoanService
     private readonly IClock _clock;
     private readonly IAuditLogger _audit;
     private readonly IJournalService _journals;
+    private readonly ICreditPoolService _pool;
 
     public LoanService(
         CpcredoDbContext db,
         ICurrentUser currentUser,
         IClock clock,
         IAuditLogger audit,
-        IJournalService journals)
+        IJournalService journals,
+        ICreditPoolService pool)
     {
         _db = db;
         _currentUser = currentUser;
         _clock = clock;
         _audit = audit;
         _journals = journals;
+        _pool = pool;
     }
 
     public async Task<Result<LoanScheduleDto>> PreviewScheduleAsync(PreviewLoanRequest request, CancellationToken cancellationToken = default)
@@ -68,7 +71,14 @@ public sealed class LoanService : ILoanService
             product.EarlyPayoffChargesFullFlatInterest));
     }
 
-    public async Task<Result<IReadOnlyList<LoanDto>>> ListAsync(string? status = null, Guid? memberId = null, CancellationToken cancellationToken = default)
+    public async Task<Result<IReadOnlyList<LoanDto>>> ListAsync(
+        string? status = null,
+        Guid? memberId = null,
+        Guid? productId = null,
+        Guid? officerId = null,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        CancellationToken cancellationToken = default)
     {
         var auth = RequireUser();
         if (!auth.IsSuccess)
@@ -79,8 +89,22 @@ public sealed class LoanService : ILoanService
             .Where(l => l.TenantId == _currentUser.TenantId);
         if (memberId is { } mid)
             query = query.Where(l => l.MemberId == mid);
+        if (productId is { } pid)
+            query = query.Where(l => l.ProductId == pid);
+        if (officerId is { } oid)
+            query = query.Where(l => (l.SubmittedByUserId ?? l.CreatedByUserId) == oid);
         if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<LoanStatus>(status, true, out var parsed))
             query = query.Where(l => l.Status == parsed);
+        if (from is { } start)
+        {
+            var startUtc = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddHours(-6);
+            query = query.Where(l => (l.SubmittedAtUtc ?? l.CreatedAtUtc) >= startUtc);
+        }
+        if (to is { } end)
+        {
+            var endUtc = DateTime.SpecifyKind(end.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddHours(18);
+            query = query.Where(l => (l.SubmittedAtUtc ?? l.CreatedAtUtc) < endUtc);
+        }
         var loans = await query.OrderByDescending(l => l.CreatedAtUtc).ToListAsync(cancellationToken);
         return Result<IReadOnlyList<LoanDto>>.Ok(await MapManyAsync(loans, cancellationToken));
     }
@@ -347,6 +371,10 @@ public sealed class LoanService : ILoanService
                 Credit = compulsory,
                 Description = "Épargne obligatoire"
             });
+
+        var poolGate = await _pool.ConsumeDisbursementAsync(loan.Id, loan.Principal, loan.CurrencyCode, cancellationToken);
+        if (!poolGate.IsSuccess)
+            return Result<LoanDto>.Fail(poolGate.ErrorCode!, poolGate.ErrorMessage!);
 
         var journal = await _journals.PostAsync(new CreateJournalRequest
         {

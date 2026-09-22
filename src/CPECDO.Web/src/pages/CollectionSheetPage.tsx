@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { downloadCollectionSheet, fetchCollectionSheet, runLoanAccrual, type CollectionSheet } from "../api/loans";
 import { formatMoney } from "../money";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 
 export function CollectionSheetPage() {
   const { t } = useTranslation();
@@ -13,6 +14,7 @@ export function CollectionSheetPage() {
   const [sheet, setSheet] = useState<CollectionSheet | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const ids = useIdOpen();
 
   async function load(nextPeriod: "today" | "week") {
     setSheet(await fetchCollectionSheet(nextPeriod));
@@ -40,7 +42,14 @@ export function CollectionSheetPage() {
       <p>
         <Link to="/credit/prets">{t("loans.back")}</Link>
       </p>
-      <h1>{t("loans.collection")}</h1>
+      <h1>
+        {t("loans.collection")}
+        <IdTrigger
+          open={ids.open}
+          onToggle={ids.toggle}
+          lines={(sheet?.rows ?? []).flatMap((row) => [{ value: row.loanNo }, { value: row.memberNo }])}
+        />
+      </h1>
       {error ? (
         <p className="login-form__error" role="alert">
           {error}
@@ -71,7 +80,7 @@ export function CollectionSheetPage() {
         <table className="data-table data-table--static">
           <thead>
             <tr>
-              <th>{t("loans.loanNo")}</th>
+              {ids.open ? <th>{t("loans.loanNo")}</th> : null}
               <th>{t("loans.member")}</th>
               <th>{t("loans.product")}</th>
               <th>{t("loans.dueDate")}</th>
@@ -85,16 +94,21 @@ export function CollectionSheetPage() {
           <tbody>
             {!sheet || sheet.rows.length === 0 ? (
               <tr>
-                <td colSpan={9}>{t("loans.collectionEmpty")}</td>
+                <td colSpan={ids.open ? 9 : 8}>{t("loans.collectionEmpty")}</td>
               </tr>
             ) : (
               sheet.rows.map((row) => (
                 <tr key={`${row.loanId}-${row.lineNo}`}>
+                  {ids.open ? (
+                    <td>
+                      <Link to={`/credit/prets/${row.loanId}`}>{row.loanNo}</Link>
+                    </td>
+                  ) : null}
                   <td>
-                    <Link to={`/credit/prets/${row.loanId}`}>{row.loanNo}</Link>
-                  </td>
-                  <td>
-                    {row.memberNo} — {row.memberName}
+                    <Link to={`/credit/prets/${row.loanId}`}>
+                      {ids.open ? `${row.memberNo} — ` : ""}
+                      {row.memberName}
+                    </Link>
                   </td>
                   <td>{row.productName}</td>
                   <td>{row.dueDate}</td>

@@ -78,4 +78,11 @@ public interface IReportService
         DateOnly? to,
         string format,
         CancellationToken cancellationToken = default);
+
+    Task<Result<CreditReportDto>> GetCreditReportAsync(
+        DateOnly? from,
+        DateOnly? to,
+        Guid? productId,
+        Guid? officerId,
+        CancellationToken cancellationToken = default);
 }

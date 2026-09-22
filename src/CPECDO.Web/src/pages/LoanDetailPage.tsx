@@ -20,6 +20,7 @@ import {
 import { fetchMemberSavings, type SavingsAccount } from "../api/savings";
 import { DisburseShortageDialog } from "../components/DisburseShortageDialog";
 import { formatMoney } from "../money";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 
 export function LoanDetailPage() {
   const { t } = useTranslation();
@@ -41,6 +42,7 @@ export function LoanDetailPage() {
   const [quote, setQuote] = useState<PayoffQuote | null>(null);
   const [busy, setBusy] = useState(false);
   const [repayAmount, setRepayAmount] = useState("");
+  const ids = useIdOpen();
   const [shortage, setShortage] = useState<TillCashShortfall | null>(null);
 
   async function load(loanId: string) {
@@ -152,11 +154,14 @@ export function LoanDetailPage() {
       {loan ? (
         <>
           <h1>
-            {loan.loanNo} · {loan.productDisplayName}
+            {loan.productDisplayName}
+            <IdTrigger
+              open={ids.open}
+              onToggle={ids.toggle}
+              lines={[{ value: loan.loanNo }, { value: loan.memberNo }]}
+            />
           </h1>
-          <p>
-            {loan.memberNo} — {loan.memberName}
-          </p>
+          <p>{loan.memberName}</p>
           <section className="facts">
             <article>
               <span>{t("loans.status")}</span>
@@ -383,7 +388,8 @@ export function LoanDetailPage() {
                     <option value="">{t("loans.selectSavings")}</option>
                     {accounts.map((account) => (
                       <option key={account.id} value={account.id}>
-                        {account.accountNo} — {account.productName}
+                        {ids.open ? `${account.accountNo} — ` : ""}
+                        {account.productName}
                       </option>
                     ))}
                   </select>

@@ -89,6 +89,8 @@ public static class DependencyInjection
             options.AddPolicy("CanCollect", policy => policy.RequireRole(RoleNames.CollectRoles.ToArray()));
             options.AddPolicy("CanLoanDraft", policy => policy.RequireRole(RoleNames.LoanDraftRoles.ToArray()));
             options.AddPolicy("CanLoanApprove", policy => policy.RequireRole(RoleNames.LoanApproveRoles.ToArray()));
+            options.AddPolicy("CanCreditReport", policy => policy.RequireRole(RoleNames.CreditReportRoles.ToArray()));
+            options.AddPolicy("CanFundCreditPool", policy => policy.RequireRole(RoleNames.TreasuryRoles.ToArray()));
             options.AddPolicy("CanCreateMember", policy => policy.RequireRole(RoleNames.MemberCreateRoles.ToArray()));
             options.AddPolicy("CanEditMember", policy => policy.RequireRole(RoleNames.MemberEditRoles.ToArray()));
             options.AddPolicy("CanTickets", policy => policy.RequireRole(RoleNames.TicketRoles.ToArray()));
@@ -126,6 +128,7 @@ public static class DependencyInjection
         services.AddScoped<ITellerService, TellerService>();
         services.AddScoped<ITreasuryService, TreasuryService>();
         services.AddScoped<ILoanProductService, LoanProductService>();
+        services.AddScoped<ICreditPoolService, CreditPoolService>();
         services.AddScoped<ILoanService, LoanService>();
 
         return services;

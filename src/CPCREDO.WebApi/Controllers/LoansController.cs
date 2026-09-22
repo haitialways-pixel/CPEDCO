@@ -19,9 +19,13 @@ public sealed class LoansController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<LoanDto>>> List(
         [FromQuery] string? status,
         [FromQuery] Guid? memberId,
+        [FromQuery] Guid? productId,
+        [FromQuery] Guid? officerId,
+        [FromQuery] DateOnly? from,
+        [FromQuery] DateOnly? to,
         CancellationToken cancellationToken)
     {
-        var result = await _loans.ListAsync(status, memberId, cancellationToken);
+        var result = await _loans.ListAsync(status, memberId, productId, officerId, from, to, cancellationToken);
         return ToActionResult(result);
     }
 

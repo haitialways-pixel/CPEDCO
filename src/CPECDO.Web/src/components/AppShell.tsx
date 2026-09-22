@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { InstitutionHeader } from "./InstitutionHeader";
 import { LanguageSwitch } from "./LanguageSwitch";
 import { useAuth } from "../auth/AuthContext";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 type RoleName = string;
 
@@ -145,6 +145,18 @@ const NAV: NavGroup[] = [
         labelKey: "nav.loanRenew",
         roles: ["Admin", "Gerant", "OfficierCredit"],
         isActive: (pathname, search) => q(search, "vue") === "renouvellement" && (pathname === "/credit/prets" || isLoanDetail(pathname))
+      },
+      {
+        to: "/credit/rapports",
+        labelKey: "nav.creditReports",
+        roles: ["Admin", "Gerant", "OfficierCredit", "Commissaire"],
+        isActive: (pathname) => pathname === "/credit/rapports"
+      },
+      {
+        to: "/credit/fonds",
+        labelKey: "nav.creditPool",
+        roles: ["Admin", "Gerant", "OfficierCredit", "Commissaire"],
+        isActive: (pathname) => pathname === "/credit/fonds"
       }
     ]
   },
@@ -265,21 +277,37 @@ function activeGroupId(groups: NavGroup[], pathname: string, search: string): st
   );
 }
 
+const LAST_CHILD_KEY = "cpcredo.nav.last.";
+
+function rememberChild(groupId: string, to: string) {
+  try {
+    sessionStorage.setItem(LAST_CHILD_KEY + groupId, to);
+  } catch {
+    /* ignore */
+  }
+}
+
+function lastOrFirst(group: NavGroup): string {
+  if (!group.children || group.children.length === 0) return group.to ?? "/";
+  try {
+    const last = sessionStorage.getItem(LAST_CHILD_KEY + group.id);
+    if (last && group.children.some((child) => child.to === last)) return last;
+  } catch {
+    /* ignore */
+  }
+  return group.children[0].to;
+}
+
 function NavMenu({
-  idPrefix,
   groups,
-  expandedId,
+  activeId,
   pathname,
-  search,
-  onToggle,
   onLeafClick
 }: {
-  idPrefix: string;
   groups: NavGroup[];
-  expandedId: string | null;
+  activeId: string | null;
   pathname: string;
   search: string;
-  onToggle: (id: string) => void;
   onLeafClick?: () => void;
 }) {
   const { t } = useTranslation();
@@ -287,42 +315,18 @@ function NavMenu({
   return (
     <nav className="app-nav__list" aria-label={t("nav.label")}>
       {groups.map((group) => {
+        const selected = group.id === activeId;
         if (group.children && group.children.length > 0) {
-          const open = expandedId === group.id;
-          const panelId = `${idPrefix}-${group.id}`;
           return (
-            <div key={group.id} className={open ? "app-nav__group is-open" : "app-nav__group"}>
-              <button
-                type="button"
-                className="app-nav__parent"
-                aria-expanded={open}
-                aria-controls={panelId}
-                onClick={() => onToggle(group.id)}
-              >
-                <span>{t(group.labelKey)}</span>
-                <span className="app-nav__chevron" aria-hidden="true">
-                  {open ? "▾" : "▸"}
-                </span>
-              </button>
-              {open ? (
-                <div id={panelId} className="app-nav__children" role="group" aria-label={t(group.labelKey)}>
-                  {group.children.map((child) => {
-                    const active = child.isActive(pathname, search);
-                    return (
-                      <Link
-                        key={child.to}
-                        to={child.to}
-                        className={active ? "app-nav__leaf active" : "app-nav__leaf"}
-                        aria-current={active ? "page" : undefined}
-                        onClick={onLeafClick}
-                      >
-                        {t(child.labelKey)}
-                      </Link>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
+            <Link
+              key={group.id}
+              to={lastOrFirst(group)}
+              className={selected ? "app-nav__leaf app-nav__top active" : "app-nav__leaf app-nav__top"}
+              aria-current={selected ? "page" : undefined}
+              onClick={onLeafClick}
+            >
+              {t(group.labelKey)}
+            </Link>
           );
         }
 
@@ -343,23 +347,61 @@ function NavMenu({
   );
 }
 
+function SubnavBar({
+  group,
+  pathname,
+  search
+}: {
+  group: NavGroup | null;
+  pathname: string;
+  search: string;
+}) {
+  const { t } = useTranslation();
+  const children = group?.children ?? [];
+  return (
+    <div className="app-subnav" role="navigation" aria-label={group ? t(group.labelKey) : t("nav.label")}>
+      {children.length === 0 ? (
+        <span className="app-subnav__title">{group ? t(group.labelKey) : ""}</span>
+      ) : (
+        children.map((child) => {
+          const active = child.isActive(pathname, search);
+          return (
+            <Link
+              key={child.to}
+              to={child.to}
+              className={active ? "app-subnav__btn is-active" : "app-subnav__btn"}
+              aria-current={active ? "page" : undefined}
+              onClick={() => group && rememberChild(group.id, child.to)}
+            >
+              {t(child.labelKey)}
+            </Link>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const { session, logout } = useAuth();
   const location = useLocation();
   const drawerTitleId = useId();
+  const headerRef = useRef<HTMLDivElement>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const groups = useMemo(
     () => (session ? visibleGroups(session.roles.map((r) => r.name)) : []),
     [session]
   );
   const routeGroupId = activeGroupId(groups, location.pathname, location.search);
+  const activeGroup = groups.find((g) => g.id === routeGroupId) ?? null;
 
   useEffect(() => {
-    setExpandedId(routeGroupId);
-  }, [routeGroupId]);
+    if (!activeGroup) return;
+    const child = activeGroup.children?.find((c) => c.isActive(location.pathname, location.search));
+    if (child) rememberChild(activeGroup.id, child.to);
+  }, [activeGroup, location.pathname, location.search]);
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -386,34 +428,41 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  if (!session) return null;
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--app-header-h", `${el.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [session]);
 
-  function toggleGroup(id: string) {
-    setExpandedId((current) => (current === id ? null : id));
-  }
+  if (!session) return null;
 
   const menuProps = {
     groups,
-    expandedId,
+    activeId: routeGroupId,
     pathname: location.pathname,
-    search: location.search,
-    onToggle: toggleGroup
+    search: location.search
   };
 
   return (
     <div className="app-shell">
-      <div className="app-shell__top">
+      <div className="app-shell__top" ref={headerRef}>
+        <button
+          type="button"
+          className="app-nav-toggle"
+          aria-label={t("nav.openMenu")}
+          aria-expanded={drawerOpen}
+          aria-controls="app-nav-drawer"
+          onClick={() => setDrawerOpen(true)}
+        >
+          ☰
+        </button>
         <div className="app-shell__brand">
-          <button
-            type="button"
-            className="app-nav-toggle"
-            aria-label={t("nav.openMenu")}
-            aria-expanded={drawerOpen}
-            aria-controls="app-nav-drawer"
-            onClick={() => setDrawerOpen(true)}
-          >
-            ☰
-          </button>
           <InstitutionHeader compact />
         </div>
         <div className="app-shell__tools">
@@ -425,11 +474,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
       <div className="app-shell__body">
         <aside className="app-nav app-nav--sidebar">
-          <NavMenu idPrefix="nav-side" {...menuProps} />
+          <NavMenu {...menuProps} />
         </aside>
         <div className="app-shell__main">
+          <SubnavBar group={activeGroup} pathname={location.pathname} search={location.search} />
           {children}
-          <footer className="app-footer">{t("letterhead.footer")}</footer>
+          <footer className="app-footer">{t("letterhead.sigle")}</footer>
         </div>
       </div>
       {drawerOpen ? (
@@ -455,7 +505,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         </div>
         <NavMenu
-          idPrefix="nav-drawer"
           {...menuProps}
           onLeafClick={() => setDrawerOpen(false)}
         />

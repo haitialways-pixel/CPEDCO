@@ -23,6 +23,7 @@ import {
   type SavingsAccount
 } from "../api/savings";
 import { KycPieces } from "../components/KycPieces";
+import { IdTrigger } from "../components/IdTrigger";
 import { MemberAccountsPanel } from "../components/MemberAccountsPanel";
 import { formatMoney } from "../money";
 
@@ -153,8 +154,10 @@ function ServiceDetail({ id }: { id: string }) {
       <p>
         <Link to="/service-client">{t("members.back")}</Link>
       </p>
-      <p className="eyebrow">{member.memberNo}</p>
-      <h1>{member.fullName}</h1>
+      <h1>
+        {member.fullName}
+        <IdTrigger lines={[{ value: member.memberNo }]} />
+      </h1>
       {error ? <p className="login-form__error">{error}</p> : null}
       <section className="facts">
         <article>
@@ -223,7 +226,8 @@ function ServiceDetail({ id }: { id: string }) {
         {accounts.map((account) => (
           <div key={account.id} className="search-bar" style={{ marginBottom: "0.6rem" }}>
             <span>
-              {account.accountNo} · {formatMoney(account.availableBalance, account.currencyCode)}
+              {formatMoney(account.availableBalance, account.currencyCode)}
+              <IdTrigger lines={[{ value: account.accountNo }]} />
             </span>
             <input type="date" value={pdfFrom} onChange={(e) => setPdfFrom(e.target.value)} />
             <input type="date" value={pdfTo} onChange={(e) => setPdfTo(e.target.value)} />
@@ -280,8 +284,8 @@ function ServiceDetail({ id }: { id: string }) {
         {accounts.map((account) => (
           <div key={account.id} className="stack-form" style={{ marginBottom: "0.8rem" }}>
             <p>
-              <strong>{account.accountNo}</strong>
-              {account.isBlocked ? ` · ${t("service.blocked")}` : ""}
+              <strong>{account.isBlocked ? t("service.blocked") : t("service.openAccount")}</strong>
+              <IdTrigger lines={[{ value: account.accountNo }]} />
             </p>
             {account.isBlocked ? (
               <button
@@ -376,7 +380,8 @@ function ServiceDetail({ id }: { id: string }) {
             {member.tickets.map((ticket) => (
               <li key={ticket.id} className="card-block">
                 <strong>
-                  {ticket.ticketNo} · {ticket.subject}
+                  {ticket.subject}
+                  <IdTrigger lines={[{ value: ticket.ticketNo }]} />
                 </strong>
                 <p className="muted">
                   {ticket.status} · {ticket.createdByName}

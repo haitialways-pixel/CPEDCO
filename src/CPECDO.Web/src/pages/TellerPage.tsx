@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { fetchMember360, searchMembers, type KycDocument, type Member360, type MemberSummary } from "../api/members";
 import { KycPieces } from "../components/KycPieces";
+import { IdTrigger, useIdOpen } from "../components/IdTrigger";
 import { MemberAccountsPanel } from "../components/MemberAccountsPanel";
 import {
   downloadLivretPdf,
@@ -138,6 +139,8 @@ export function TellerPage() {
   const [busy, setBusy] = useState(false);
   const [incoming, setIncoming] = useState<InternalCashMovement[]>([]);
   const [pendingOpen, setPendingOpen] = useState<InternalCashMovement[]>([]);
+  const memberIds = useIdOpen();
+  const openIds = useIdOpen();
 
   async function refreshTill() {
     const current = await fetchCurrentTill("HTG");
@@ -452,7 +455,12 @@ export function TellerPage() {
             {pendingOpen.length === 0 ? <p className="muted">{t("teller.openNone")}</p> : null}
             {pendingOpen.map((m) => (
               <p key={m.id}>
-                {m.movementNo} · {t("teller.openIssued")}: {money(m.amount, m.currencyCode)}
+                {t("teller.openIssued")}: {money(m.amount, m.currencyCode)}
+                <IdTrigger
+                  open={openIds.open}
+                  onToggle={openIds.toggle}
+                  lines={[{ value: m.movementNo }]}
+                />
               </p>
             ))}
             <label>
@@ -509,7 +517,12 @@ export function TellerPage() {
         {member ? (
           <>
             <p>
-              <strong>{member.fullName}</strong> ({member.memberNo})
+              <strong>{member.fullName}</strong>
+              <IdTrigger
+                open={memberIds.open}
+                onToggle={memberIds.toggle}
+                lines={[{ value: member.memberNo }, { value: selected?.accountNo }]}
+              />
             </p>
             {profile ? (
               <MemberAccountsPanel
@@ -535,7 +548,8 @@ export function TellerPage() {
               <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.accountNo} — {a.productName} ({money(a.availableBalance, a.currencyCode)})
+                    {memberIds.open ? `${a.accountNo} — ` : ""}
+                    {a.productName} ({money(a.availableBalance, a.currencyCode)})
                   </option>
                 ))}
               </select>
@@ -609,7 +623,8 @@ export function TellerPage() {
                         <option value="">{t("savings.empty")}</option>
                         {accounts.map((a) => (
                           <option key={a.id} value={a.id}>
-                            {a.accountNo} — {a.productName}
+                            {memberIds.open ? `${a.accountNo} — ` : ""}
+                            {a.productName}
                           </option>
                         ))}
                       </select>

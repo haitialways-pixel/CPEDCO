@@ -114,3 +114,47 @@ public sealed record LiquidityRatioDto(
     IReadOnlyList<ReportLineDto> MemberDeposits,
     decimal TotalMemberDeposits,
     decimal? Ratio);
+
+public sealed record CreditReportCountDto(string Key, int Count, string Href);
+
+public sealed record CreditReportAmountDto(string Key, decimal Amount, string Href);
+
+public sealed record CreditRejectReasonDto(string Reason, int Count);
+
+public sealed record CreditBreakdownDto(
+    string Id,
+    string Label,
+    int Count,
+    decimal Requested,
+    decimal Disbursed,
+    string Href);
+
+public sealed record CreditReportDto(
+    DateOnly From,
+    DateOnly To,
+    string CurrencyCode,
+    int Received,
+    int Pending,
+    int Approved,
+    int Rejected,
+    int Cancelled,
+    int Disbursed,
+    decimal RequestedAmount,
+    decimal ApprovedAmount,
+    decimal DisbursedAmount,
+    decimal OutstandingPrincipal,
+    decimal PoolOpening,
+    decimal PoolFunded,
+    decimal PoolDisbursed,
+    decimal PoolAvailable,
+    decimal InterestReceived,
+    decimal InterestAccrued,
+    decimal FeesPenaltiesReceived,
+    decimal? ApprovalRate,
+    double? AvgDaysApplyToDecision,
+    double? AvgDaysDecisionToDisburse,
+    decimal Par30,
+    decimal Par90,
+    IReadOnlyList<CreditRejectReasonDto> RejectReasons,
+    IReadOnlyList<CreditBreakdownDto> ByProduct,
+    IReadOnlyList<CreditBreakdownDto> ByOfficer);

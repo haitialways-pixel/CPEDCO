@@ -514,6 +514,7 @@ public sealed class DataSeeder
             A("1020", "10", "Caisse USD", "Kes USD", "Cash USD", GlAccountType.Asset, NormalBalance.Debit, Currencies.Usd, true),
             A("1030", "10", "Coffre HTG", "Kòf HTG", "Vault HTG", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg, true),
             A("1031", "10", "Coffre USD", "Kòf USD", "Vault USD", GlAccountType.Asset, NormalBalance.Debit, Currencies.Usd, true),
+            A("1040", "10", "Fonds de crédit HTG", "Fon kredi HTG", "Credit pool HTG", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg, true),
             A("1110", "10", "Banque HTG", "Bank HTG", "Bank HTG", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg, true),
             A("1111", "10", "Banque Unibank HTG", "Bank Unibank HTG", "Unibank HTG", GlAccountType.Asset, NormalBalance.Debit, Currencies.Htg, true),
             A("1120", "10", "Banque USD", "Bank USD", "Bank USD", GlAccountType.Asset, NormalBalance.Debit, Currencies.Usd, true),

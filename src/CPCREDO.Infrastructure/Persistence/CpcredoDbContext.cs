@@ -44,6 +44,8 @@ public class CpcredoDbContext : DbContext
     public DbSet<Loan> Loans => Set<Loan>();
     public DbSet<LoanInstallment> LoanInstallments => Set<LoanInstallment>();
     public DbSet<LoanRepayment> LoanRepayments => Set<LoanRepayment>();
+    public DbSet<CreditPool> CreditPools => Set<CreditPool>();
+    public DbSet<CreditPoolMovement> CreditPoolMovements => Set<CreditPoolMovement>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
@@ -569,6 +571,30 @@ public class CpcredoDbContext : DbContext
             b.Property(x => x.IdempotencyKey).HasMaxLength(128);
             b.HasIndex(x => new { x.TenantId, x.ReceiptNo }).IsUnique();
             b.HasOne(x => x.Loan).WithMany(l => l.Repayments).HasForeignKey(x => x.LoanId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CreditPool>(b =>
+        {
+            b.ToTable("credit_pools");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
+            b.Property(x => x.FundedTotal).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.DisbursedTotal).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.HasIndex(x => new { x.TenantId, x.CurrencyCode }).IsUnique();
+            b.HasMany(x => x.Movements).WithOne(m => m.Pool).HasForeignKey(m => m.PoolId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CreditPoolMovement>(b =>
+        {
+            b.ToTable("credit_pool_movements");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.Kind).HasMaxLength(24).IsRequired();
+            b.Property(x => x.SourceKind).HasMaxLength(24).IsRequired();
+            b.Property(x => x.Amount).HasPrecision(MoneyAmount.Precision, MoneyAmount.Scale);
+            b.Property(x => x.CurrencyCode).HasMaxLength(3).IsRequired();
+            b.Property(x => x.Note).HasMaxLength(512);
         });
     }
 

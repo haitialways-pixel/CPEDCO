@@ -10,6 +10,7 @@ import {
   type SavingsProduct
 } from "../api/savings";
 import { formatMoney } from "../money";
+import { IdTrigger, useIdOpen } from "./IdTrigger";
 
 type Props = {
   member: Member360;
@@ -35,6 +36,7 @@ export function MemberAccountsPanel({ member, canOpen, canPay = false, onMemberU
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [productError, setProductError] = useState<string | null>(null);
+  const ids = useIdOpen();
 
   const filteredProducts = products.filter(
     (p) => member.legalStatus !== "Usager" || p.productKind === "AVue"
@@ -114,7 +116,18 @@ export function MemberAccountsPanel({ member, canOpen, canPay = false, onMemberU
 
   return (
     <section className="card-block accounts-panel" id="comptes">
-      <h2>{t("savings.accountsTitle")}</h2>
+      <h2>
+        {t("savings.accountsTitle")}
+        <IdTrigger
+          open={ids.open}
+          onToggle={ids.toggle}
+          lines={[
+            ...accounts.map((account) => ({ value: account.accountNo })),
+            { value: shares.qualificationAccountNo },
+            { value: shares.permanentAccountNo }
+          ]}
+        />
+      </h2>
       {error ? (
         <p className="login-form__error" role="alert">
           {error}
@@ -133,7 +146,7 @@ export function MemberAccountsPanel({ member, canOpen, canPay = false, onMemberU
           <table className="data-table">
             <thead>
               <tr>
-                <th>{t("savings.accountNo")}</th>
+                {ids.open ? <th>{t("savings.accountNo")}</th> : null}
                 <th>{t("savings.product")}</th>
                 <th>{t("savings.available")}</th>
                 <th>{t("service.status")}</th>
@@ -146,11 +159,15 @@ export function MemberAccountsPanel({ member, canOpen, canPay = false, onMemberU
                   onClick={() => navigate(`/savings-accounts/${account.id}`)}
                   style={{ cursor: "pointer" }}
                 >
+                  {ids.open ? (
+                    <td>
+                      <Link to={`/savings-accounts/${account.id}`}>{account.accountNo}</Link>
+                    </td>
+                  ) : null}
                   <td>
-                    <Link to={`/savings-accounts/${account.id}`}>{account.accountNo}</Link>
-                  </td>
-                  <td>
-                    {account.productName} ({account.productKind})
+                    <Link to={`/savings-accounts/${account.id}`}>
+                      {account.productName} ({account.productKind})
+                    </Link>
                   </td>
                   <td>{formatMoney(account.availableBalance, account.currencyCode)}</td>
                   <td>{account.isBlocked ? t("service.blocked") : t("service.openAccount")}</td>
@@ -158,7 +175,7 @@ export function MemberAccountsPanel({ member, canOpen, canPay = false, onMemberU
               ))}
               {shares.qualificationAccountNo ? (
                 <tr>
-                  <td>{shares.qualificationAccountNo}</td>
+                  {ids.open ? <td>{shares.qualificationAccountNo}</td> : null}
                   <td>{t("savings.kindQual")}</td>
                   <td>{formatMoney(shares.qualificationBookValue, shares.currencyCode)}</td>
                   <td>
@@ -168,7 +185,7 @@ export function MemberAccountsPanel({ member, canOpen, canPay = false, onMemberU
               ) : null}
               {shares.permanentAccountNo ? (
                 <tr>
-                  <td>{shares.permanentAccountNo}</td>
+                  {ids.open ? <td>{shares.permanentAccountNo}</td> : null}
                   <td>{t("savings.kindPerm")}</td>
                   <td>{formatMoney(shares.permanentBookValue, shares.currencyCode)}</td>
                   <td>

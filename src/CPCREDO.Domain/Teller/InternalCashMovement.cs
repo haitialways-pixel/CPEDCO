@@ -86,5 +86,6 @@ public enum CashMovementReason
     EcartShortage = 6,
     EcartOverage = 7,
     ExternalLoan = 8,
-    Grant = 9
+    Grant = 9,
+    CreditPoolFunding = 10
 }

@@ -10,6 +10,7 @@ import {
 } from "../api/savings";
 
 import { formatMoney } from "../money";
+import { IdTrigger } from "../components/IdTrigger";
 
 function money(value: number, currency: string) {
   return formatMoney(value, currency);
@@ -67,8 +68,10 @@ export function SavingsStatementPage() {
         <>
           <div className="page__head">
             <div>
-              <p className="eyebrow">{account.accountNo}</p>
-              <h1>{account.productName}</h1>
+              <h1>
+                {account.productName}
+                <IdTrigger lines={[{ value: account.accountNo }]} />
+              </h1>
             </div>
           </div>
           <section className="facts">

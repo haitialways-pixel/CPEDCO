@@ -15,6 +15,7 @@ import {
 } from "../api/members";
 import { MemberAccountsPanel } from "../components/MemberAccountsPanel";
 import { KycPieces } from "../components/KycPieces";
+import { IdTrigger } from "../components/IdTrigger";
 import { formatMoney } from "../money";
 
 function canAccessMembers(roles: string[]) {
@@ -230,8 +231,10 @@ function RegisterDetail({ id }: { id: string }) {
       <p>
         <Link to="/membres">{t("members.back")}</Link>
       </p>
-      <p className="eyebrow">{member.memberNo}</p>
-      <h1>{member.fullName}</h1>
+      <h1>
+        {member.fullName}
+        <IdTrigger lines={[{ value: member.memberNo }]} />
+      </h1>
       {error ? <p className="login-form__error">{error}</p> : null}
       <MemberAccountsPanel
         member={member}
